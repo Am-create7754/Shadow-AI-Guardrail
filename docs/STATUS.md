@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-10-14 · Current phase: **Phase 1 complete → Phase 2 next**_
+_Last updated: 2026-10-14 · Current phase: **Phase 2 complete → Phase 3 next**_
 
 Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ not started
 
@@ -10,7 +10,7 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 |---|---|---|
 | 0 | Workspace, git, structure, tooling, CI, docs | ✅ |
 | 1 | Detection engine, redaction, policy engine, evaluation | ✅ |
-| 2 | Canonical audit events, HMAC chain, verification, checkpoints | ⬜ |
+| 2 | Canonical audit events, HMAC chain, verification, checkpoints | ✅ |
 | 3 | FastAPI gateway, auth, rate limits, mock provider | ⬜ |
 | 4 | Real provider adapter, output inspection, streaming | ⬜ |
 | 5 | Developer portal + admin dashboard (React) | ⬜ |
@@ -38,13 +38,25 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | Repository hygiene: no vendor-token literals; no invisible/bidi characters (Trojan Source); ASCII-only Python | `tests/test_repo_hygiene.py` |
 | CLI inspector | manual: `python -m app.cli "..."` (output shown in README) |
 | Labeled evaluation with development + held-out sets | `evaluation/`, `docs/EVALUATION.md`, `tests/test_evaluation.py` regression floor |
+| **Phase 2** — HMAC-SHA256 audit chain over canonical records (seq + prev_hash authenticated) | `tests/test_audit_chain.py::test_mac_covers_every_field`, `test_append_builds_contiguous_linked_chain` |
+| Tamper detection located by seq: edit, rehash without key, delete, reorder, forged insert, non-canonical data | `test_audit_chain.py` attack tests |
+| Rollback / wipe detection via anchor file outside the DB; honest limitation test without it | `test_rollback_detected_by_anchor_file`, `test_full_wipe_detected_by_anchor`, `test_rollback_undetectable_without_external_anchor` |
+| Ed25519 checkpoints bound to the chain; external/exported verification; untrusted, altered and foreign checkpoints rejected | `test_full_rewrite_with_stolen_hmac_key`, `test_checkpoint_*` |
+| Concurrency: no forks/duplicates with 4 connection pools and with 4 OS processes on one SQLite file | `tests/test_audit_concurrency.py`; `test_appends_use_begin_immediate` |
+| Append-only triggers (UPDATE / DELETE / INSERT OR REPLACE) and UNIQUE(prev_hash) fork guard | `test_triggers_block_*`, `test_insert_or_replace_blocked_by_triggers`, `test_unique_prev_hash_prevents_fork` |
+| Key management: separate audit key, rotation with ordering, retired-key rejection, weak-key rejection, dev keys outside repo, verify never generates keys, public-key-only verification | `tests/test_audit_infra.py`, `tests/test_audit_review_regressions.py` |
+| Verifier robustness: malformed / oversized rows and checkpoints reported, never raised; issue cap cannot hide rollback | `test_blob_columns_*`, `test_junk_checkpoint_row_reported`, `test_issue_cap_*` |
+| Secret scan on audit events over decoded values | `test_event_containing_*`, `test_secret_scan_bypasses_closed` |
+| Alembic migration matches models (no drift) and installs triggers; migrated DB works end to end | `test_migration_matches_models_and_installs_triggers`, `test_migrated_database_works_end_to_end` |
+| Audit CLI: init-db, verify (exit 1 on issues), checkpoint, export, tamper demo | `tests/test_audit_cli.py`; manual run of `python -m app.audit tamper-demo` |
 
 ## Latest test results
 
 Command: `backend\scripts\check.ps1` (Windows PowerShell)
 
-- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 19 files
-- pytest: **332 passed** (includes 57 slow ReDoS tests, 3 Hypothesis properties × 150 examples)
+- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 33 files
+- pytest: **419 passed** (332 Phase 1 + 87 Phase 2; includes slow ReDoS and
+  multi-process tests, 3 Hypothesis properties × 150 examples)
 
 ## Independent security review (Phase 1)
 
@@ -72,6 +84,37 @@ submitter (to be enforced in Phase 3).
 
 While reproducing, a further bug was found and fixed: the CLI crashed printing
 non-ASCII on Windows consoles (cp1252).
+
+## Independent security review (Phase 2)
+
+A second reviewer agent audited the audit chain (read-only, with reproductions).
+All confirmed findings were re-reproduced, fixed, and covered by regression tests
+(`tests/test_audit_review_regressions.py` and `test_audit_chain.py`):
+
+| # | Confirmed issue | Fix |
+|---|---|---|
+| 1 | **Keyless rollback / wipe went undetected** (delete newest events + head + checkpoints). The docs wrongly claimed only a key holder could do this. | Anchor file outside the DB (on by default); docs corrected; honest limitation kept as a test |
+| 2 | A retired audit key could still sign new tail events | Keyring rotation order; `retired_key` issue |
+| 3 | Verifier crashed on BLOB-typed columns and deeply nested JSON | Type checks, per-row isolation, size cap; reported as `malformed` / `oversized` |
+| 4 | One junk checkpoint row (an INSERT the triggers allow) crashed verification | Reported as `checkpoint_malformed`; export skips such rows |
+| 5 | `INSERT OR REPLACE` overwrote rows despite the append-only triggers | `BEFORE INSERT` clash triggers + `recursive_triggers`; tested with triggers intact |
+| 6 | Secret scan ran on escaped JSON: escaped-quote passwords, key-name secrets and split card numbers got through | Scan decoded keys/values, `key=value` pairs and joined lists, each piece separately |
+| 7 | Weak retired keys and an empty dev key file were accepted | Length checks on every key source |
+
+Plausible items addressed: verification with only the public key
+(`verify --public-key`, never loads the private key); trusted keys for
+signing-key rotation; checkpoints bound to the chain's first event; PostgreSQL
+`TRUNCATE` trigger; head/checkpoint findings exempt from the issue cap; planted
+oversized rows not parsed. Not changed: dev keys share the per-user data folder
+with the database (documented); Windows ignores `0o600` (files inherit the
+user-profile ACL); no idempotency key for client retries (Phase 3 request IDs).
+
+Found while fixing: `verify` silently generated a **new** audit key when the key
+file was missing, producing only `unknown_key` noise. Verification now never
+generates keys and fails with a clear message (exit 2). Also: copying
+`.env.example` verbatim produced empty (rejected) keys - empty variables now mean
+"unset"; and the repo-hygiene test was extended to catch ASCII control
+characters after one slipped into a document.
 
 ## Detection quality (5 seeds; see `docs/EVALUATION.md`)
 
@@ -108,9 +151,17 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
    like any other secret.
 9. Datasets are synthetic and small; metrics are evidence for this project, not a
    claim of comprehensive real-world detection.
-10. The gateway does not exist yet — nothing is intercepted on the network until Phase 3.
+10. The gateway does not exist yet — nothing is intercepted on the network until Phase 3,
+    and nothing writes audit events automatically until the gateway is wired up.
 11. Bulk prompts producing more than 5,000 candidate detections are blocked
     outright (fail closed) rather than inspected.
+12. **Audit rollback** is detected only through a checkpoint stored outside the
+    database. The default anchor file is on the same machine; protection against a
+    full host compromise requires exporting checkpoints to another system.
+13. The PostgreSQL path (row lock, triggers) is implemented but untested; only
+    SQLite is verified.
+14. Verifying event MACs needs the symmetric audit key; only checkpoint
+    verification works with a public key alone.
 
 ## Environment notes (Windows)
 
@@ -122,18 +173,20 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 
 ## Next steps (exact)
 
-1. **Phase 2 — audit chain**
-   - Add SQLAlchemy 2 + Alembic (SQLite), `audit_events` table: `seq` (unique,
-     monotonically increasing), `ts`, `event_type`, `actor`, `request_id`,
-     `payload` (canonical JSON of safe metadata only), `prev_hash`, `hash`.
-   - Canonical JSON (sorted keys, no whitespace, UTF-8, ISO-8601 UTC timestamps).
-   - `hash = HMAC-SHA256(GUARDRAIL_AUDIT_KEY, prev_hash || canonical_event)`; genesis
-     prev_hash = 64 zeros; separate key from the fingerprint key.
-   - Single-writer append: transaction + `UNIQUE(seq)` + retry on conflict; test with
-     concurrent writers.
-   - Verifier that reports the first broken sequence; tests for modification,
-     deletion (truncation), reordering, insertion, and wrong-key forgery.
-   - Signed checkpoints of the chain head using Ed25519 (`cryptography`), public
-     key exportable for independent verification.
-2. Phase 3 — FastAPI gateway using `Guardrail.inspect`, with a mock provider and a
-   test proving blocked prompts never reach the provider.
+**Phase 3 — FastAPI gateway**
+
+1. Add FastAPI + Uvicorn; app factory with lifespan creating the engine, the
+   `Guardrail`, the `AuditLog` and the provider.
+2. Pydantic request/response schemas: `POST /v1/inspect` (scan only) and
+   `POST /v1/chat/completions` (OpenAI-compatible subset); request-size limit
+   enforced before parsing; request IDs on every response; structured errors
+   that never echo input.
+3. Authentication: users and API keys stored as Argon2 hashes; JWT for the
+   dashboard; roles (`developer`, `admin`) decided server-side only.
+4. Rate limiting per principal; safe logging (no prompts, no auth headers).
+5. Provider abstraction + deterministic mock provider; integration tests proving
+   BLOCK and REQUIRE_APPROVAL requests never reach the provider, and that only
+   redacted text does.
+6. Approval queue for REQUIRE_APPROVAL (admin approve/deny) and an audit event
+   for every decision.
+7. Independent security review of the gateway, as for Phases 1-2.

@@ -34,7 +34,7 @@ Client ──► FastAPI gateway [planned, Phase 3]
            Guardrail.inspect(response) + output rules [planned, Phase 4]
              ▼
            Safe response to client
-             └──► Audit event (HMAC-SHA256 chain) [planned, Phase 2]
+             └──► Audit event (HMAC-SHA256 chain) [built, Phase 2; wired in Phase 3]
 ```
 
 ## 3. Components
@@ -104,13 +104,18 @@ backreferences and lookaround; patterns matching the empty string are rejected.
 is `None` for BLOCK and REQUIRE_APPROVAL. `to_public()` is the only
 serialisation path and never includes raw values or the placeholder mapping.
 
-### 3.4 Audit chain [planned — Phase 2]
+### 3.4 Audit chain — `backend/app/audit/`, `backend/app/db/` [built]
 
-Canonical JSON events, sequence number, `prev_hash`,
-`hash = HMAC-SHA256(audit_key, prev_hash ‖ canonical_event)`, single-writer
-serialisation in the database, verification endpoint, and periodic Ed25519-signed
-checkpoints of the chain head. The HMAC key is separate from the fingerprint
-key and is never stored in the database.
+Append-only event log in SQLite (SQLAlchemy 2 async + Alembic). Every event is
+authenticated with `HMAC-SHA256(audit_key, domain ‖ canonical(record))`, where the
+record includes its `seq` and the previous event's hash. Appends are serialised
+(`BEGIN IMMEDIATE` on SQLite, `FOR UPDATE` on the head row for PostgreSQL) and
+`UNIQUE(prev_hash)` makes forks impossible. Append-only triggers block
+accidental edits. Ed25519-signed checkpoints of the chain head are stored and
+exportable; the verifier checks links, MACs, sequence, head and checkpoints and
+pinpoints each problem by `seq`. Events are scanned and rejected if they contain
+secrets. The audit key is separate from the fingerprint key; dev keys live
+outside the repository. Full design, threat model and limits: [AUDIT.md](AUDIT.md).
 
 ### 3.5 Token vault [planned — only if required]
 

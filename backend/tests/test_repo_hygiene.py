@@ -63,7 +63,13 @@ def test_no_invisible_or_bidi_characters_in_source() -> None:
     for path in _files():
         text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, line in enumerate(text.splitlines(), 1):
-            if any(ord(c) > 127 and unicodedata.category(c) in ("Cf", "Cc") for c in line):
+            # Any format char, and any control char except tab / carriage return
+            # (also catches ASCII controls such as a stray \x07 from a bad escape).
+            if any(
+                unicodedata.category(c) == "Cf"
+                or (unicodedata.category(c) == "Cc" and c not in "\t\r")
+                for c in line
+            ):
                 offenders.append(f"{path.relative_to(REPO)}:{lineno}")
     assert not offenders, offenders
 

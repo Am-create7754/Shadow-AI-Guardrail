@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import random
+import tempfile
 
 import pytest
 from pydantic import SecretStr
@@ -9,6 +11,15 @@ from app.core.config import Environment, Settings
 from app.detection.engine import DetectionEngine
 from app.guardrail import Guardrail
 from app.policy.engine import load_policy
+
+# Never let tests touch the real per-user data directory (database, keys, anchor).
+_ISOLATED = tempfile.mkdtemp(prefix="guardrail-tests-")
+os.environ.setdefault("GUARDRAIL_KEYS_DIR", os.path.join(_ISOLATED, "keys"))
+os.environ.setdefault("GUARDRAIL_AUDIT_ANCHOR_PATH", os.path.join(_ISOLATED, "anchor.json"))
+os.environ.setdefault(
+    "GUARDRAIL_DATABASE_URL",
+    "sqlite+aiosqlite:///" + os.path.join(_ISOLATED, "db.sqlite").replace("\\", "/"),
+)
 
 # Test-only key (not a secret): fixed so fingerprints are reproducible across runs.
 TEST_FINGERPRINT_KEY = "test-fingerprint-key-0123456789abcdef-not-secret"

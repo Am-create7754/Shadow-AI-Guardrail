@@ -13,8 +13,8 @@ model output and writes a tamper-evident audit trail.
 "Fix this connection string: db_password=[PASSWORD_1]"
 ```
 
-> **Current phase:** Phase 1 (detection + policy engine) is complete.
-> The HTTP gateway, audit chain, dashboards and browser extension are planned.
+> **Current phase:** Phases 1 (detection + policy engine) and 2 (tamper-evident
+> audit log) are complete. The HTTP gateway, dashboards and browser extension are planned.
 > See [docs/STATUS.md](docs/STATUS.md) for exactly what works and how it was verified.
 
 ## Repository layout
@@ -25,12 +25,15 @@ backend/
     core/config.py          settings (GUARDRAIL_* env vars)
     detection/              normaliser, rules, validators, entropy, engine, redaction
     policy/                 policy schema, evaluation, default_policy.yaml
+    audit/                  HMAC-chained audit log, signed checkpoints, verifier, CLI
+    db/                     async SQLAlchemy engine (SQLite hardening)
+    migrations/             Alembic migrations
     guardrail.py            inspect(text) -> decision + sanitized text
     cli.py                  command-line inspector
   evaluation/               synthetic generators, labeled datasets, metrics script
   tests/                    pytest + Hypothesis + ReDoS suites
   scripts/check.ps1         all quality gates
-docs/                       architecture, status, evaluation report
+docs/                       architecture, status, evaluation report, audit design
 ```
 
 ## Quick start (Windows PowerShell)
@@ -54,6 +57,14 @@ Run all checks (lint, format, strict type-check, tests):
 
 ```powershell
 .\scripts\check.ps1
+```
+
+Audit log (see [docs/AUDIT.md](docs/AUDIT.md)):
+
+```powershell
+.venv\Scripts\python -m app.audit init-db        # create the database
+.venv\Scripts\python -m app.audit tamper-demo    # tamper with a demo chain and detect it
+.venv\Scripts\python -m app.audit verify
 ```
 
 Detection-quality report:
