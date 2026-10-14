@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-10-14 · Current phase: **Phase 2 complete → Phase 3 next**_
+_Last updated: 2026-10-14 · Current phase: **Phase 3 complete → Phase 4 next**_
 
 Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ not started
 
@@ -11,7 +11,7 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | 0 | Workspace, git, structure, tooling, CI, docs | ✅ |
 | 1 | Detection engine, redaction, policy engine, evaluation | ✅ |
 | 2 | Canonical audit events, HMAC chain, verification, checkpoints | ✅ |
-| 3 | FastAPI gateway, auth, rate limits, mock provider | ⬜ |
+| 3 | FastAPI gateway, auth, rate limits, mock provider | ✅ |
 | 4 | Real provider adapter, output inspection, streaming | ⬜ |
 | 5 | Developer portal + admin dashboard (React) | ⬜ |
 | 6 | Chrome MV3 extension | ⬜ |
@@ -49,14 +49,23 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | Secret scan on audit events over decoded values | `test_event_containing_*`, `test_secret_scan_bypasses_closed` |
 | Alembic migration matches models (no drift) and installs triggers; migrated DB works end to end | `test_migration_matches_models_and_installs_triggers`, `test_migrated_database_works_end_to_end` |
 | Audit CLI: init-db, verify (exit 1 on issues), checkpoint, export, tamper demo | `tests/test_audit_cli.py`; manual run of `python -m app.audit tamper-demo` |
+| **Phase 3** — FastAPI gateway: `/v1/inspect`, OpenAI-compatible `/v1/chat/completions`, approvals, admin API | `tests/test_api_gateway.py` |
+| Only redacted text reaches the provider; BLOCK / REQUIRE_APPROVAL never do; audit committed before forwarding or holding (fail closed) | `test_secret_is_redacted_before_reaching_provider`, `test_blocked_prompt_never_reaches_provider`, `test_audit_failure_fails_closed`, `test_approval_not_created_when_audit_fails` |
+| Conversation-wide inspection: shared placeholders, all roles, secrets/phrases split across messages, model name | `test_conversation_redacted_consistently_across_messages`, `test_token_split_across_messages_is_redacted`, `test_phrase_split_across_messages_still_needs_approval`, `test_secret_in_model_name_rejected_and_never_stored` |
+| Auth: Argon2id (off the event loop), JWT HS256 with pinned algorithm and required claims, peppered-HMAC API keys, DB-sourced roles, logout / deactivation revoke sessions | `tests/test_api_security.py`, `test_api_review_regressions.py` |
+| Approval workflow: AES-256-GCM (HKDF, row-bound AAD), single-use execution, release on failure, expiry, separation of duties incl. account-creation links | `test_approval_flow_end_to_end`, `test_held_ciphertext_is_encrypted_and_bound_to_row`, `test_admin_cannot_approve_requests_of_accounts_they_created`, `test_approval_survives_provider_failure` |
+| HTTP hardening: body limit (incl. chunked), security headers on every response incl. 500s, server-side request ids, no input echo in errors, CORS allow-list, docs off in production | `tests/test_api_security.py`, `test_unhandled_route_exception_keeps_headers_and_hides_message` |
+| Rate limiting: per user, login per IP, bounded memory that fails closed | `test_per_user_rate_limit`, `test_login_rate_limited`, `test_rate_limiter_memory_is_bounded` |
+| Provider abstraction + deterministic mock provider (echo, error, timeout, rate-limit, leak modes); failures mapped, audited, never echoed | `tests/test_gateway_units.py`, `test_provider_failures_mapped_and_audited`, `test_unexpected_provider_exception_is_contained` |
+| Live run with Uvicorn; official OpenAI Python SDK 3.31 works unmodified (blocks surface as `PermissionDeniedError`) | manual, 2026-10-14 (see Phase 3 review section) |
 
 ## Latest test results
 
 Command: `backend\scripts\check.ps1` (Windows PowerShell)
 
-- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 33 files
-- pytest: **419 passed** (332 Phase 1 + 87 Phase 2; includes slow ReDoS and
-  multi-process tests, 3 Hypothesis properties × 150 examples)
+- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 60 files
+- pytest: **511 passed** (Phases 1-3; includes slow ReDoS and multi-process
+  tests, 3 Hypothesis properties × 150 examples, 92 gateway tests)
 
 ## Independent security review (Phase 1)
 
@@ -116,6 +125,43 @@ generates keys and fails with a clear message (exit 2). Also: copying
 "unset"; and the repo-hygiene test was extended to catch ASCII control
 characters after one slipped into a document.
 
+## Independent security review (Phase 3)
+
+A third reviewer agent probed the running gateway. Every confirmed finding was
+first captured as a failing test (`tests/test_api_review_regressions.py`, all 18
+failed before the fixes) and then fixed:
+
+| # | Confirmed issue | Fix |
+|---|---|---|
+| 1 | A raw token in the `model` field was stored unencrypted in a held request and shown to admins; the approval row was written before the audit check | Model name inspected (`400 invalid_model`); audit written before the row is created |
+| 2 | One admin could approve their own request via a sock-puppet account they created | Separation of duties extended to account-creation links (`created_by`) |
+| 3 | Anyone could lock a known user out of login (per-username bucket spent before the password check) | Login limited per client IP only; rationale documented |
+| 4 | Unhandled exceptions bypassed the middleware: no security headers, and the exception message (possibly prompt text) reached the server log | Middleware contains all exceptions; non-`ProviderError` provider failures mapped to 502, audited, message dropped |
+| 5 | A secret or phrase split across two messages was not detected | Conversation also scanned joined (no separator / space); boundary-spanning findings mapped back to each message |
+| 6 | Argon2 ran on the event loop (~150 ms stall per login) | `asyncio.to_thread` for hashing and verification |
+| 7 | A failed execution used up the approval | Claim released on provider or audit failure |
+
+Plausible items fixed: expired requests can no longer be decrypted for review;
+approval decisions and user changes are audited *before* they take effect; a
+failed post-delivery audit no longer turns a delivered answer into an error
+(`audit_incomplete: true`); a full rate-limit table refuses new keys instead of
+evicting live ones; logout endpoint and session revocation on deactivation
+(survives reactivation); at most 20 API keys per user, prefix collisions
+retried; the last active admin cannot be deactivated (checked under a write
+lock); unknown field names are not echoed in 422s; the docs CSP exemption
+matches exact paths only.
+
+Found while fixing: joining messages without a separator glued unrelated text
+together (`...=hunter2hunter` + `Is it strong?` redacted the word "Is"). Cross-
+message findings are now dropped when the first message already contains the
+whole value as the same entity type.
+
+Manual verification (2026-10-14): the gateway was started with Uvicorn and
+exercised over real HTTP (redaction, block, split-token redaction, logout,
+admin-route denial, audit verify); the server log contained no prompt text and
+no tracebacks. The official `openai` Python SDK (3.31) worked against
+`/v1/chat/completions` unmodified.
+
 ## Detection quality (5 seeds; see `docs/EVALUATION.md`)
 
 | Set | Samples | Entity recall | Finding precision | F1 | Benign-prompt FP rate | Leaked values |
@@ -151,8 +197,9 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
    like any other secret.
 9. Datasets are synthetic and small; metrics are evidence for this project, not a
    claim of comprehensive real-world detection.
-10. The gateway does not exist yet — nothing is intercepted on the network until Phase 3,
-    and nothing writes audit events automatically until the gateway is wired up.
+10. Only traffic sent **through the gateway** is protected. Employees using AI
+    websites directly are not covered until the browser extension (Phase 6), and
+    then only on supported sites.
 11. Bulk prompts producing more than 5,000 candidate detections are blocked
     outright (fail closed) rather than inspected.
 12. **Audit rollback** is detected only through a checkpoint stored outside the
@@ -162,6 +209,17 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
     SQLite is verified.
 14. Verifying event MACs needs the symmetric audit key; only checkpoint
     verification works with a public key alone.
+15. **Model output is not inspected yet** (`output_inspected: false`); a provider
+    could return secrets or unsafe code unchanged until Phase 4. Streaming is
+    rejected rather than inspected.
+16. Rate limits are per process; several workers each enforce their own budget.
+    `X-Forwarded-For` is not trusted, so behind a reverse proxy all clients share
+    the proxy's login budget until trusted-proxy support is configured.
+17. No JWT refresh tokens; sessions last 30 minutes. A logout revokes sessions at
+    sub-second precision only.
+18. Separation of duties relies on recorded account creators; CLI-bootstrapped
+    users have none, and anyone with server or database access is outside it.
+19. Only a deterministic mock provider exists; no real AI service has been called.
 
 ## Environment notes (Windows)
 
@@ -173,20 +231,18 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 
 ## Next steps (exact)
 
-**Phase 3 — FastAPI gateway**
+**Phase 4 — real provider and output security**
 
-1. Add FastAPI + Uvicorn; app factory with lifespan creating the engine, the
-   `Guardrail`, the `AuditLog` and the provider.
-2. Pydantic request/response schemas: `POST /v1/inspect` (scan only) and
-   `POST /v1/chat/completions` (OpenAI-compatible subset); request-size limit
-   enforced before parsing; request IDs on every response; structured errors
-   that never echo input.
-3. Authentication: users and API keys stored as Argon2 hashes; JWT for the
-   dashboard; roles (`developer`, `admin`) decided server-side only.
-4. Rate limiting per principal; safe logging (no prompts, no auth headers).
-5. Provider abstraction + deterministic mock provider; integration tests proving
-   BLOCK and REQUIRE_APPROVAL requests never reach the provider, and that only
-   redacted text does.
-6. Approval queue for REQUIRE_APPROVAL (admin approve/deny) and an audit event
-   for every decision.
-7. Independent security review of the gateway, as for Phases 1-2.
+1. OpenAI-compatible HTTP provider adapter (httpx, timeouts, retries with
+   backoff, error mapping without echoing upstream bodies), usable with OpenAI,
+   Anthropic's OpenAI-compatible endpoint or a local Ollama server; credentials
+   only from configuration. Live testing needs an API key or a local Ollama
+   install - the mock provider remains the default.
+2. Response inspection with the same engine: secrets or PII in model output are
+   redacted (configurable output policy), and the `mock-leak` model proves it.
+3. Insecure-code checks on generated code (e.g. `eval`/`exec`, `shell=True`,
+   SQL string building, `verify=False`, hard-coded credentials, weak hashes),
+   reported as findings and optionally annotated.
+4. Streaming with chunk-boundary-safe inspection: hold back a sliding window so
+   a secret split across chunks is never released before it can be checked.
+5. Independent security review of Phase 4.

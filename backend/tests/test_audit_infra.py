@@ -52,12 +52,15 @@ def test_production_requires_audit_and_checkpoint_keys(tmp_path: Path) -> None:
         fingerprint_key=FP_KEY,
         audit_key=SecretStr("a" * 40),
         checkpoint_key_path=tmp_path / "k.pem",
+        jwt_secret=SecretStr("j" * 40),
+        api_key_pepper=SecretStr("p" * 40),
+        data_key=SecretStr("d" * 40),
     )
     assert ok.audit_key is not None
 
 
 def test_audit_key_must_differ_from_fingerprint_key() -> None:
-    with pytest.raises(ValidationError, match="must differ"):
+    with pytest.raises(ValidationError, match="differ"):
         Settings(environment=Environment.TEST, fingerprint_key=FP_KEY, audit_key=FP_KEY)
 
 

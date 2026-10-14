@@ -13,8 +13,10 @@ model output and writes a tamper-evident audit trail.
 "Fix this connection string: db_password=[PASSWORD_1]"
 ```
 
-> **Current phase:** Phases 1 (detection + policy engine) and 2 (tamper-evident
-> audit log) are complete. The HTTP gateway, dashboards and browser extension are planned.
+> **Current phase:** Phases 1-3 are complete: detection + policy engine,
+> tamper-evident audit log, and the HTTP gateway (auth, approvals, mock provider,
+> OpenAI-compatible endpoint). Output inspection, dashboards and the browser
+> extension are planned.
 > See [docs/STATUS.md](docs/STATUS.md) for exactly what works and how it was verified.
 
 ## Repository layout
@@ -25,6 +27,10 @@ backend/
     core/config.py          settings (GUARDRAIL_* env vars)
     detection/              normaliser, rules, validators, entropy, engine, redaction
     policy/                 policy schema, evaluation, default_policy.yaml
+    api/                    FastAPI gateway: routes, auth deps, middleware, rate limits
+    auth/                   users, Argon2 passwords, API keys, JWT sessions
+    approvals/              approval workflow (AES-GCM encrypted held prompts)
+    providers/              provider interface + deterministic mock provider
     audit/                  HMAC-chained audit log, signed checkpoints, verifier, CLI
     db/                     async SQLAlchemy engine (SQLite hardening)
     migrations/             Alembic migrations
@@ -33,7 +39,7 @@ backend/
   evaluation/               synthetic generators, labeled datasets, metrics script
   tests/                    pytest + Hypothesis + ReDoS suites
   scripts/check.ps1         all quality gates
-docs/                       architecture, status, evaluation report, audit design
+docs/                       architecture, status, API, evaluation report, audit design
 ```
 
 ## Quick start (Windows PowerShell)
@@ -57,6 +63,14 @@ Run all checks (lint, format, strict type-check, tests):
 
 ```powershell
 .\scripts\check.ps1
+```
+
+Run the gateway (see [docs/API.md](docs/API.md)):
+
+```powershell
+.venv\Scripts\python -m app.audit init-db
+.venv\Scripts\python -m app.api.manage create-user admin --role admin
+.venv\Scripts\uvicorn --factory app.api.app:create_app --host 127.0.0.1 --port 8000
 ```
 
 Audit log (see [docs/AUDIT.md](docs/AUDIT.md)):

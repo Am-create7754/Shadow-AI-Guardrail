@@ -120,7 +120,9 @@ class PolicyEngine:
         if all_decisions:
             worst = max(all_decisions, key=lambda d: (d.action.rank, d.finding.severity))
             if worst.action is not Action.ALLOW:
-                reasons.append(f"{worst.finding.entity_type}: {worst.reason}")
+                # "ENTITY (reason)" rather than "ENTITY: reason": the latter reads like a
+                # "password: value" assignment to the detector when this text is audited.
+                reasons.append(f"{worst.finding.entity_type} ({worst.reason})")
 
         if truncated:
             overall = Action.BLOCK

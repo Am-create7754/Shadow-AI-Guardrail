@@ -8,7 +8,9 @@ from pathlib import Path
 from alembic import context
 from sqlalchemy.engine import Connection
 
-import app.audit.models  # noqa: F401 - register tables on Base.metadata
+import app.approvals.models
+import app.audit.models
+import app.auth.models  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.engine import create_engine, is_sqlite

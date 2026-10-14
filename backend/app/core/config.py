@@ -91,6 +91,30 @@ class Settings(BaseSettings):
     # Where development keys are generated and persisted (outside the repository).
     keys_dir: Path = default_data_dir() / "keys"
 
+    # --- Gateway -----------------------------------------------------------------
+    # HMAC key for dashboard session tokens (JWT, HS256).
+    jwt_secret: SecretStr | None = None
+    jwt_ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    # Server-side pepper for hashing API keys (keys are random, so HMAC suffices).
+    api_key_pepper: SecretStr | None = None
+    # AES-256-GCM key encrypting prompts held for administrator approval.
+    data_key: SecretStr | None = None
+    # Hard ceiling on HTTP request bodies, enforced before JSON parsing.
+    max_body_bytes: int = Field(default=1_000_000, ge=1_024, le=20_000_000)
+    # Per-principal request budget (token bucket) and a stricter login budget per client.
+    rate_limit_per_minute: int = Field(default=120, ge=1, le=100_000)
+    login_rate_limit_per_minute: int = Field(default=10, ge=1, le=1_000)
+    # Browser origins allowed to call the API (the dashboard). Comma-separated.
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    approval_ttl_minutes: int = Field(default=24 * 60, ge=1, le=30 * 24 * 60)
+    # Which AI provider adapter to use ("mock" needs no key or network).
+    provider: str = Field(default="mock", pattern=r"^[a-z][a-z0-9_]{1,30}$")
+    provider_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     @model_validator(mode="after")
     def _ensure_keys(self) -> Settings:
         if self.fingerprint_key is None:
@@ -110,6 +134,20 @@ class Settings(BaseSettings):
                 raise ValueError("GUARDRAIL_AUDIT_KEY must be set in production")
             if self.checkpoint_key_path is None:
                 raise ValueError("GUARDRAIL_CHECKPOINT_KEY_PATH must be set in production")
+            for name in ("jwt_secret", "api_key_pepper", "data_key"):
+                if getattr(self, name) is None:
+                    raise ValueError(f"GUARDRAIL_{name.upper()} must be set in production")
+        # Every configured key must be strong and distinct from every other key.
+        named = {
+            name: value.get_secret_value()
+            for name in ("fingerprint_key", "audit_key", "jwt_secret", "api_key_pepper", "data_key")
+            if (value := getattr(self, name)) is not None
+        }
+        for name, value in named.items():
+            if len(value.encode()) < MIN_KEY_BYTES:
+                raise ValueError(f"GUARDRAIL_{name.upper()} must be at least {MIN_KEY_BYTES} bytes")
+        if len(set(named.values())) != len(named):
+            raise ValueError("GUARDRAIL_* keys must all be different from each other")
         if self.audit_key is not None and self.fingerprint_key is not None:
             if len(self.audit_key.get_secret_value().encode()) < MIN_KEY_BYTES:
                 raise ValueError(f"GUARDRAIL_AUDIT_KEY must be at least {MIN_KEY_BYTES} bytes")

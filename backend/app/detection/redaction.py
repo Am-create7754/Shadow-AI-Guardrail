@@ -87,37 +87,70 @@ def _regions(findings: Sequence[Finding]) -> list[tuple[int, int, Finding]]:
     return regions
 
 
-def redact(text: str, findings: Sequence[Finding], key: bytes) -> RedactionResult:
+class PlaceholderAllocator:
+    """Hands out placeholders; one allocator can span several texts.
+
+    A conversation is redacted with ONE allocator so that ``[PASSWORD_1]`` means
+    the same secret in every message, and numbers already present in *any*
+    message are never reused.
+    """
+
+    def __init__(self, key: bytes, texts: Sequence[str] = ()) -> None:
+        self._key = key
+        self.reserved: dict[str, set[int]] = {}
+        for t in texts:
+            self.reserve_from(t)
+        self._counters: dict[str, int] = {}
+        self._by_fp: dict[tuple[str, str], str] = {}
+        self.mapping: dict[str, str] = {}
+
+    def reserve_from(self, text: str) -> None:
+        for etype, numbers in _reserved_numbers(text).items():
+            self.reserved.setdefault(etype, set()).update(numbers)
+
+    def placeholder_for(self, etype: str, original: str) -> tuple[str, str]:
+        fp = fingerprint(normalize(original).text, self._key)
+        placeholder = self._by_fp.get((etype, fp))
+        if placeholder is None:
+            n = self._counters.get(etype, 0) + 1
+            taken = self.reserved.get(etype, set())
+            while n in taken:
+                n += 1
+            self._counters[etype] = n
+            placeholder = f"[{etype}_{n}]"
+            self._by_fp[(etype, fp)] = placeholder
+            self.mapping[placeholder] = original
+        return placeholder, fp
+
+
+def redact(
+    text: str,
+    findings: Sequence[Finding],
+    key: bytes,
+    allocator: PlaceholderAllocator | None = None,
+) -> RedactionResult:
     """Replace every redactable finding's span with a typed placeholder.
 
-    Findings may overlap; overlapping spans are merged into one region.
+    Findings may overlap; overlapping spans are merged into one region. Pass a
+    shared ``allocator`` to keep numbering consistent across several texts.
     """
     regions = _regions([f for f in findings if f.redactable])
-    reserved = _reserved_numbers(text) if regions else {}
-    counters: dict[str, int] = {}
-    by_fp: dict[tuple[str, str], str] = {}
-    mapping: dict[str, str] = {}
+    if allocator is None:
+        allocator = PlaceholderAllocator(key, [text] if regions else [])
     replacements: list[Replacement] = []
     parts: list[str] = []
     cursor = 0
+    used: dict[str, str] = {}
 
     for start, end, label in regions:
         original = text[start:end]
-        fp = fingerprint(normalize(original).text, key)
-        etype = label.entity_type
-        placeholder = by_fp.get((etype, fp))
-        if placeholder is None:
-            n = counters.get(etype, 0) + 1
-            taken = reserved.get(etype, set())
-            while n in taken:
-                n += 1
-            counters[etype] = n
-            placeholder = f"[{etype}_{n}]"
-            by_fp[(etype, fp)] = placeholder
-            mapping[placeholder] = original
+        placeholder, fp = allocator.placeholder_for(label.entity_type, original)
+        used[placeholder] = allocator.mapping[placeholder]
         parts.append(text[cursor:start])
         parts.append(placeholder)
         cursor = end
-        replacements.append(Replacement(placeholder, etype, label.rule_id, start, end, fp))
+        replacements.append(
+            Replacement(placeholder, label.entity_type, label.rule_id, start, end, fp)
+        )
     parts.append(text[cursor:])
-    return RedactionResult("".join(parts), tuple(replacements), mapping)
+    return RedactionResult("".join(parts), tuple(replacements), used)

@@ -19,7 +19,7 @@ sites; network- or endpoint-level enforcement is out of scope.
 ## 2. Request flow
 
 ```
-Client ──► FastAPI gateway [planned, Phase 3]
+Client ──► FastAPI gateway [built, Phase 3]
              │ auth (JWT) · rate limit · size limit · Pydantic validation
              ▼
            Guardrail.inspect(prompt) [built]
@@ -29,12 +29,12 @@ Client ──► FastAPI gateway [planned, Phase 3]
              │ ── REQUIRE_APPROVAL ───────► approval queue, nothing forwarded yet
              │ ── REDACT / ALLOW
              ▼
-           Provider adapter (mock first, real later) [planned, Phase 3/4]
+           Provider adapter (mock built; real adapter Phase 4)
              ▼
            Guardrail.inspect(response) + output rules [planned, Phase 4]
              ▼
            Safe response to client
-             └──► Audit event (HMAC-SHA256 chain) [built, Phase 2; wired in Phase 3]
+             └──► Audit event (HMAC-SHA256 chain) [built; written before forwarding]
 ```
 
 ## 3. Components
@@ -124,11 +124,25 @@ original values into model output is **not** done automatically; if a later
 phase needs it, it will be a separate authorised operation using AES-GCM with
 unique nonces, keys held outside the database, and expiry.
 
-### 3.6 Gateway, providers, dashboards, extension [planned — Phases 3–6]
+### 3.6 Gateway - `backend/app/api/`, `auth/`, `approvals/`, `providers/` [built]
 
-FastAPI service with JWT auth and roles decided server-side; mock provider first;
-OpenAI-compatible endpoint; React + Vite + TypeScript dashboards; Chrome MV3
-extension that talks only to the configured gateway.
+FastAPI service (see [API.md](API.md)). A pure-ASGI middleware assigns
+server-side request ids, adds security headers and enforces the body-size limit
+while the body streams in. Authentication accepts JWT session tokens (HS256,
+pinned algorithm, issuer/audience/expiry required) or peppered-HMAC API keys;
+the role is always re-read from the database. Per-user and per-IP login token
+buckets limit request rates. `/v1/chat/completions` inspects all messages as one
+conversation (shared placeholder numbering, conversation-wide escalation),
+writes an audit event, and only then forwards redacted text to the provider;
+BLOCK and REQUIRE_APPROVAL never reach it. Held requests are stored redacted and
+AES-256-GCM-encrypted, decided by a different administrator, executed once by
+the requester, and erased afterwards. Validation errors never echo input.
+
+### 3.7 Providers, output inspection, dashboards, extension [planned - Phases 4-6]
+
+A real provider adapter and response inspection (Phase 4), React dashboards
+(Phase 5) and a Chrome MV3 extension that talks only to the configured gateway
+(Phase 6).
 
 ## 4. Key decisions
 

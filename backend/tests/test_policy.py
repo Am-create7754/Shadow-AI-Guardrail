@@ -110,7 +110,7 @@ def test_policy_reasons_are_explainable(guard: Guardrail) -> None:
     insp = guard.inspect("db_password=admin_pass_123")
     (d,) = insp.decision.findings
     assert d.reason == "category SECRET -> REDACT"
-    assert insp.decision.reasons == ("PASSWORD: category SECRET -> REDACT",)
+    assert insp.decision.reasons == ("PASSWORD (category SECRET -> REDACT)",)
 
 
 @pytest.mark.parametrize(
@@ -226,3 +226,14 @@ def test_overlapping_findings_count_once_for_escalation(guard: Guardrail) -> Non
     token = synth.jwt(random.Random(7))
     insp = guard.inspect(f"Authorization: Bearer {token}")
     assert insp.action is Action.REDACT
+
+
+def test_decision_reasons_do_not_trip_the_detector(guard: Guardrail) -> None:
+    """Reasons are written to the audit log, which rejects secret-looking text."""
+    samples = ["db_password=admin_pass_123", "mail a@example.com", "COMPANY CONFIDENTIAL memo",
+               "card 4111 1111 1111 1111", "token ghp_" + "a1B2" * 9]  # fmt: skip
+    for text in samples:
+        for reason in guard.inspect(text).decision.reasons:
+            secrets = [f for f in guard.detector.scan(reason).findings
+                       if f.category.value in ("SECRET", "FINANCIAL")]  # fmt: skip
+            assert not secrets, (reason, secrets)
