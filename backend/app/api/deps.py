@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.errors import ApiError, request_id
 from app.api.ratelimit import RateLimiter, retry_after_header
@@ -58,7 +59,19 @@ ServicesDep = Annotated[Services, Depends(get_services)]
 _UNAUTHORIZED = {"WWW-Authenticate": "Bearer"}
 
 
-async def current_user(request: Request, services: ServicesDep) -> User:
+# Declares the scheme in the OpenAPI document (adds the "Authorize" button to
+# /docs). auto_error=False: the header is still parsed and validated below.
+_bearer_scheme = HTTPBearer(
+    auto_error=False,
+    description="Session token from /v1/auth/login, or an API key (grk_...)",
+)
+
+
+async def current_user(
+    request: Request,
+    services: ServicesDep,
+    _doc: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)] = None,
+) -> User:
     """Authenticate via ``Authorization: Bearer <JWT or API key>``.
 
     The role used for authorisation always comes from the database row, never

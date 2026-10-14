@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import text
 
 from app.api.deps import ServicesDep
 from app.api.errors import ApiError
 
 router = APIRouter(tags=["health"])
+
+
+@router.get("/", include_in_schema=False)
+async def root(request: Request) -> Response:
+    """Send browsers to the interactive docs (when enabled, i.e. outside production)."""
+    if request.app.docs_url:
+        return RedirectResponse(request.app.docs_url)
+    return Response(status_code=404)
 
 
 @router.get("/health")

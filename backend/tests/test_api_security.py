@@ -360,3 +360,9 @@ def test_all_keys_must_be_distinct() -> None:
             jwt_secret="s" * 40,  # type: ignore[arg-type]
             data_key="s" * 40,
         )  # type: ignore[arg-type]
+
+
+def test_root_redirects_to_docs_outside_production(gw: Gateway) -> None:
+    r = gw.client.get("/", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "/docs"
