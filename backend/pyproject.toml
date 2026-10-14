@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guardrail"
+version = "0.1.0"
+description = "Autonomous AppSec Guardrail for Shadow AI Deployments - security gateway for AI prompts"
+readme = "../README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "PyYAML>=6.0.2,<7",
+    "google-re2>=1.1",  # linear-time engine for admin-supplied regexes
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.115",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-PyYAML",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.policy" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "slow: long-running tests (ReDoS / performance)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "N", "C4", "PT"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # deliberate unicode (homoglyph / zero-width tests)
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
+"evaluation/**" = ["S311"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["app", "evaluation"]

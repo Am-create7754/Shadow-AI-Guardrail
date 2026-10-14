@@ -1,0 +1,334 @@
+# Labeled synthetic evaluation dataset.
+#
+# Template syntax
+#   {{GEN}}            replaced by a fresh synthetic value from evaluation/synth.py;
+#                      the inserted span is an EXPECTED sensitive entity.
+#   [[literal|TYPE]]   literal text that is an expected entity of TYPE.
+# Samples with no expected spans are NEGATIVES: any actioned finding is a false positive.
+# `expect_action` (optional) checks the overall policy decision.
+#
+# Every value is synthetic. Domains use RFC 2606 reserved names.
+
+# ---------------------------------------------------------------- secrets: vendor tokens
+- id: s-aws-01
+  text: "Why does boto3 fail? aws_access_key_id = {{AWS_ACCESS_KEY}}"
+  tags: [secret, vendor]
+- id: s-aws-02
+  text: "AWS_SECRET_ACCESS_KEY={{AWS_SECRET_KEY}}\nAWS_REGION=ap-south-1"
+  tags: [secret, context]
+  expect_action: BLOCK
+- id: s-aws-03
+  text: "client = boto3.client('s3', aws_access_key_id='{{AWS_ACCESS_KEY}}', aws_secret_access_key='{{AWS_SECRET_KEY}}')"
+  tags: [secret, vendor, code]
+  expect_action: BLOCK
+- id: s-gcp-01
+  text: "const firebaseConfig = { apiKey: \"{{GCP_API_KEY}}\", authDomain: \"demo.example.com\" };"
+  tags: [secret, vendor, code]
+- id: s-gh-01
+  text: "git clone https://{{GITHUB_TOKEN}}@github.com/acme/private-repo.git fails with 403"
+  tags: [secret, vendor]
+- id: s-gh-02
+  text: "export GITHUB_TOKEN={{GITHUB_TOKEN}} && gh pr list"
+  tags: [secret, vendor]
+- id: s-gl-01
+  text: "Our CI uses token {{GITLAB_TOKEN}} to push tags, is that ok?"
+  tags: [secret, vendor]
+- id: s-slack-01
+  text: "slack_client = WebClient(token=\"{{SLACK_TOKEN}}\")"
+  tags: [secret, vendor, code]
+- id: s-stripe-01
+  text: "stripe.api_key = \"{{STRIPE_KEY}}\"  # why are charges failing"
+  tags: [secret, vendor, code]
+- id: s-sg-01
+  text: "SENDGRID_API_KEY: {{SENDGRID_KEY}}"
+  tags: [secret, vendor]
+- id: s-npm-01
+  text: "//registry.npmjs.org/:_authToken={{NPM_TOKEN}}"
+  tags: [secret, vendor]
+- id: s-oai-01
+  text: "client = OpenAI(api_key=\"{{OPENAI_KEY}}\") returns 401"
+  tags: [secret, vendor, code]
+- id: s-ant-01
+  text: "I set ANTHROPIC_API_KEY to {{ANTHROPIC_KEY}} but the SDK says unauthorized"
+  tags: [secret, vendor]
+- id: s-jwt-01
+  text: "curl -H 'Authorization: Bearer {{JWT}}' https://api.example.com/v1/users"
+  tags: [secret, token]
+- id: s-jwt-02
+  text: "Decode this token for me: {{JWT}}"
+  tags: [secret, token]
+- id: s-pk-01
+  text: "My deploy key isn't working:\n{{PRIVATE_KEY}}\nwhat format is this?"
+  tags: [secret, key]
+  expect_action: BLOCK
+
+# ---------------------------------------------------------------- secrets: passwords / context
+- id: s-pw-01
+  text: "Fix this connection string: db_password={{PASSWORD}}"
+  tags: [secret, password, spec-example]
+  expect_action: REDACT
+- id: s-pw-02
+  text: "DATABASE_URL=postgres://app_user:{{PASSWORD}}@db.prod.internal:5432/orders"
+  tags: [secret, password, url]
+- id: s-pw-03
+  text: "mysql -u root -p'{{PASSWORD}}' -h localhost"
+  tags: [secret, password, cli]
+  known_gap: "-p'value' CLI flag form has no password keyword"
+- id: s-pw-04
+  text: "the root password is {{PASSWORD}} please don't share"
+  tags: [secret, password, natural-language]
+- id: s-pw-05
+  text: "{\"username\": \"admin\", \"password\": \"{{PASSWORD}}\"}"
+  tags: [secret, password, json]
+- id: s-pw-06
+  text: "spring.datasource.password={{PASSWORD}}\nspring.datasource.username=svc"
+  tags: [secret, password, config]
+- id: s-pw-07
+  text: "redis:\n  host: cache\n  password: {{PASSWORD}}\n"
+  tags: [secret, password, yaml]
+- id: s-pw-08
+  text: "mongodb+srv://reporting:{{PASSWORD}}@cluster0.example.net/analytics?retryWrites=true"
+  tags: [secret, password, url]
+- id: s-pw-09
+  text: "SMTP_PASS = '{{PASSWORD}}'"
+  tags: [secret, password, config]
+  known_gap: "PASS without WORD suffix is not a password keyword"
+- id: s-pw-10
+  text: "connect with pwd: {{PASSWORD}} then run migrations"
+  tags: [secret, password, natural-language]
+- id: s-pw-11
+  text: "conn = psycopg2.connect(host='db', user='etl', password='{{PASSWORD}}')"
+  tags: [secret, password, code]
+- id: s-pw-12
+  text: "The wifi passphrase: {{PASSWORD}}"
+  tags: [secret, password, natural-language]
+
+# ---------------------------------------------------------------- secrets: generic / entropy
+- id: s-gen-01
+  text: "client_secret = '{{RANDOM_SECRET}}'"
+  tags: [secret, generic]
+- id: s-gen-02
+  text: "headers = {'X-API-Key': '{{RANDOM_SECRET}}'}"
+  tags: [secret, generic, code]
+- id: s-gen-03
+  text: "my internal service token: {{RANDOM_SECRET}}"
+  tags: [secret, generic, entropy]
+- id: s-gen-04
+  text: "Use this webhook signing secret {{RANDOM_SECRET}} to verify payloads"
+  tags: [secret, generic, entropy]
+- id: s-gen-05
+  text: "PAYMENT_GATEWAY_KEY={{RANDOM_SECRET}}"
+  tags: [secret, generic, env]
+- id: s-gen-06
+  text: "Here is the value {{RANDOM_SECRET}} from our vault, why is it rejected?"
+  tags: [secret, generic, entropy, no-context]
+
+# ---------------------------------------------------------------- PII
+- id: p-email-01
+  text: "Draft a reply to {{EMAIL}} about the refund"
+  tags: [pii, email]
+- id: p-email-02
+  text: "Users: {{EMAIL}}, {{EMAIL}}, {{EMAIL}}"
+  tags: [pii, email, multi]
+- id: p-card-01
+  text: "Customer card {{CREDIT_CARD}} was declined twice"
+  tags: [financial, card]
+  expect_action: BLOCK
+- id: p-card-02
+  text: "test payment with [[4111 1111 1111 1111|CREDIT_CARD]] fails"
+  tags: [financial, card, test-card]
+  expect_action: BLOCK
+- id: p-aadhaar-01
+  text: "Verify KYC for Aadhaar {{AADHAAR}}"
+  tags: [pii, india]
+- id: p-aadhaar-02
+  text: "uid: {{AADHAAR}}, name: Priya Iyer"
+  tags: [pii, india]
+- id: p-pan-01
+  text: "PAN card number {{PAN}} mismatch with GST records"
+  tags: [pii, india]
+- id: p-ssn-01
+  text: "Employee SSN {{SSN}} needs to be updated in payroll"
+  tags: [pii, us]
+- id: p-iban-01
+  text: "Refund to IBAN {{IBAN}} please"
+  tags: [financial, iban]
+- id: p-phone-01
+  text: "Call the customer on {{PHONE}} tomorrow"
+  tags: [pii, phone]
+- id: p-phone-02
+  text: "mobile: {{PHONE}}"
+  tags: [pii, phone]
+- id: p-mixed-01
+  text: "Customer: Rahul Khan, email {{EMAIL}}, phone {{PHONE}}, PAN {{PAN}}"
+  tags: [pii, multi, record]
+- id: p-emp-01
+  text: "Promotion letter for {{EMPLOYEE_ID}}"
+  tags: [pii, custom]
+
+# ---------------------------------------------------------------- infrastructure / confidential
+- id: i-ip-01
+  text: "ssh deploy@{{INTERNAL_IP}} -p 22 hangs"
+  tags: [infra]
+- id: i-ip-02
+  text: "nginx upstream: server {{INTERNAL_IP}}:8080;"
+  tags: [infra]
+- id: c-code-01
+  text: "Summarise the roadmap for [[Project Nightingale|CODENAME]]"
+  tags: [confidential, custom]
+  expect_action: REQUIRE_APPROVAL
+- id: c-marker-01
+  text: "STRICTLY CONFIDENTIAL - Q3 revenue projections attached, rewrite as a summary"
+  tags: [confidential, marker]
+  expect_action: REQUIRE_APPROVAL
+- id: c-host-01
+  text: "Our wiki lives at [[corp.acme-internal.example|INTERNAL_HOST]]"
+  tags: [infra, custom]
+
+# ---------------------------------------------------------------- adversarial
+- id: a-zw-01
+  text: "key {{AWS_ACCESS_KEY}}"
+  tags: [adversarial, zero-width]
+  transform: zero_width
+- id: a-fw-01
+  text: "token {{GITHUB_TOKEN}}"
+  tags: [adversarial, fullwidth]
+  transform: fullwidth
+- id: a-repeat-01
+  text: "postgres://svc:{{PASSWORD}}@db.example.com/app - also the admin UI uses the same, see above"
+  tags: [adversarial, repeat]
+- id: a-placeholder-01
+  text: "[PASSWORD_1] is not real but db_password={{PASSWORD}} is"
+  tags: [adversarial, placeholder-collision]
+- id: a-split-01
+  text: "the key is {{AWS_ACCESS_KEY}}, split it into two env vars"
+  tags: [adversarial]
+- id: a-quote-01
+  text: "password=\"{{PASSWORD}}\";password2='{{PASSWORD}}'"
+  tags: [adversarial, multi]
+- id: a-bulk-01
+  text: "{{EMAIL}},{{PHONE}}\n{{EMAIL}},{{PHONE}}\n{{EMAIL}},{{PHONE}}\n{{EMAIL}},{{PHONE}}\n{{EMAIL}},{{PHONE}}\n{{EMAIL}},{{PHONE}}"
+  tags: [adversarial, bulk, record]
+  expect_action: REQUIRE_APPROVAL
+
+# ---------------------------------------------------------------- negatives (benign)
+- id: n-01
+  text: "How do I reverse a linked list in Python?"
+  tags: [negative]
+- id: n-02
+  text: "Explain the difference between TCP and UDP with examples."
+  tags: [negative]
+- id: n-03
+  text: "password = os.getenv('DB_PASSWORD')\nif not password:\n    raise RuntimeError('missing')"
+  tags: [negative, code, reference]
+- id: n-04
+  text: "tokens = tokenizer(text, max_tokens=1024)"
+  tags: [negative, code]
+- id: n-05
+  text: "git commit 3f786850e387550fdab836ed7e6dc881de23001b broke the build"
+  tags: [negative, hash]
+- id: n-06
+  text: "Request id 123e4567-e89b-12d3-a456-426614174000 timed out"
+  tags: [negative, uuid]
+- id: n-07
+  text: "sha256sum gives e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 for empty files"
+  tags: [negative, hash]
+- id: n-08
+  text: "def get_user_profile_picture_url(user_id: int) -> str: ..."
+  tags: [negative, code]
+- id: n-09
+  text: "import { AbstractSingletonProxyFactoryBean } from './springIsFunnyRight';"
+  tags: [negative, code]
+- id: n-10
+  text: "The password field must be at least 12 characters and contain a symbol."
+  tags: [negative, password-word]
+- id: n-11
+  text: "Set password: <your-password-here> in config.yaml"
+  tags: [negative, placeholder]
+- id: n-12
+  text: "DB_PASSWORD=${DB_PASSWORD}"
+  tags: [negative, placeholder]
+- id: n-13
+  text: "api_key: ********"
+  tags: [negative, placeholder]
+- id: n-14
+  text: "Order #20231115 shipped to warehouse 7, total 4599 rupees"
+  tags: [negative, numbers]
+- id: n-15
+  text: "Server listens on 0.0.0.0:8080 and public DNS 8.8.8.8"
+  tags: [negative, ip]
+- id: n-16
+  text: "Version 10.2.3.4 of the SDK fixed the bug"
+  tags: [negative, version]
+- id: n-17
+  text: "Keep this between us, it is a surprise party plan"
+  tags: [negative]
+- id: n-18
+  text: "export const API_BASE_URL = 'https://api.example.com/v2';"
+  tags: [negative, code]
+- id: n-19
+  text: "const token = req.headers.authorization?.split(' ')[1];"
+  tags: [negative, code, reference]
+- id: n-20
+  text: "The image is data:image/png;base64,iVBORw0KGgo and it fails to render"
+  tags: [negative, base64]
+- id: n-21
+  text: "src/components/dashboard/SecurityEventsTable.tsx has a lint error"
+  tags: [negative, path]
+- id: n-22
+  text: "Use bcrypt with cost factor 12 to hash the password before storing it."
+  tags: [negative, password-word]
+- id: n-23
+  text: "My phone number format question: should I validate with libphonenumber?"
+  tags: [negative]
+- id: n-24
+  text: "Compute 1234567890123 * 3 and explain the steps"
+  tags: [negative, numbers]
+- id: n-25
+  text: "password_reset_token_expiry_minutes = 30"
+  tags: [negative, config]
+- id: n-26
+  text: "Write unit tests for the function validate_credentials(user, password)."
+  tags: [negative, code]
+- id: n-27
+  text: "The token bucket algorithm refills tokens at a fixed rate."
+  tags: [negative]
+- id: n-28
+  text: "SELECT id, email FROM users WHERE created_at > NOW() - INTERVAL '7 days';"
+  tags: [negative, sql]
+- id: n-29
+  text: "Docker image digest sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4"
+  tags: [negative, hash]
+- id: n-30
+  text: "npm install react@18.3.1 react-dom@18.3.1 --save-exact"
+  tags: [negative, versions]
+- id: n-31
+  text: "The confidential computing feature in Azure uses enclaves."
+  tags: [negative, marker-word]
+- id: n-32
+  text: "Our office phone is listed on the website; how do I add a click-to-call button?"
+  tags: [negative]
+- id: n-33
+  text: "Translate 'the meeting is at 10:30' into Hindi"
+  tags: [negative]
+- id: n-34
+  text: "auth_token_ttl: 3600\nrefresh_token_rotation: true"
+  tags: [negative, config]
+- id: n-35
+  text: "K8s secret is mounted via secretKeyRef: name: db-credentials, key: password"
+  tags: [negative, k8s, reference]
+- id: n-36
+  text: "base64 of 'hello world' is aGVsbG8gd29ybGQ="
+  tags: [negative, base64]
+- id: n-37
+  text: "regex for emails: ^[\\w.+-]+@[\\w-]+\\.[\\w.]+$"
+  tags: [negative, regex]
+- id: n-38
+  text: "LICENSE: MIT. Copyright (c) 2026 Example Corp."
+  tags: [negative]
+- id: n-39
+  text: "Benchmark: 98765 requests in 43210 ms on 16 cores"
+  tags: [negative, numbers]
+- id: n-40
+  text: "Fix: TypeError: Cannot read properties of undefined (reading 'accessToken')"
+  tags: [negative, code]

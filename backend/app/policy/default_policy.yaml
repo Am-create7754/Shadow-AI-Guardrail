@@ -1,0 +1,67 @@
+# Default guardrail policy.
+#
+# Action precedence (strongest wins for the request as a whole):
+#   ALLOW < REDACT < REQUIRE_APPROVAL < BLOCK
+# Lookup order for a single finding (most specific first):
+#   rule_actions -> entity_actions -> category_actions -> default_action
+# Findings below min_confidence are recorded for monitoring but never act.
+
+version: 1
+name: default
+description: >
+  Redact credentials and personal data before prompts leave the organisation;
+  block private keys and cloud root credentials outright; hold documents marked
+  confidential for administrator approval.
+
+default_action: ALLOW
+min_confidence: 0.6
+
+category_actions:
+  SECRET: REDACT
+  PII: REDACT
+  FINANCIAL: REDACT
+  INFRASTRUCTURE: REDACT
+  CONFIDENTIAL: REQUIRE_APPROVAL
+
+entity_actions:
+  PRIVATE_KEY: BLOCK           # never send key material anywhere, even masked
+  AWS_SECRET_KEY: BLOCK
+  GCP_SERVICE_ACCOUNT_KEY: BLOCK
+  AZURE_STORAGE_KEY: BLOCK
+  CREDIT_CARD: BLOCK           # PCI-DSS scope: cardholder data must not leave
+  EMAIL: REDACT
+
+rule_actions: {}
+
+escalation:
+  approval_at_findings: 10     # e.g. a pasted table of customer records
+  block_at_findings: 25
+  block_at_risk_score: null
+
+disabled_rules: []
+
+# Organisation-specific terms. Synthetic examples for the demo tenant.
+custom_terms:
+  - term: Project Nightingale
+    entity_type: CODENAME
+    category: CONFIDENTIAL
+    severity: HIGH
+  - term: corp.acme-internal.example
+    entity_type: INTERNAL_HOST
+    category: INFRASTRUCTURE
+    severity: MEDIUM
+
+custom_patterns:
+  - rule_id: acme-employee-id
+    pattern: '\bEMP-\d{6}\b'
+    entity_type: EMPLOYEE_ID
+    category: PII
+    severity: MEDIUM
+    confidence: 0.9
+    description: ACME employee identifier (synthetic demo format)
+
+entropy:
+  enabled: true
+  min_length: 20
+  min_entropy_base64: 4.0
+  min_entropy_hex: 3.0

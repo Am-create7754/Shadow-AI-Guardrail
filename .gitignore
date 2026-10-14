@@ -1,0 +1,40 @@
+# --- Secrets & local config (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+build/
+dist/
+
+# --- Local data (databases, audit logs, eval output) ---
+*.db
+*.sqlite
+*.sqlite3
+backend/var/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+extension/dist/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
