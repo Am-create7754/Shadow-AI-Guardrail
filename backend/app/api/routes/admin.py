@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request
 
 from app.api.deps import AdminUser, ServicesDep
 from app.api.errors import ApiError
+from app.api.metrics import compute_metrics, window_start
 from app.api.schemas import CreateUserRequest, DecisionRequest, UpdateUserRequest, UserOut
 from app.approvals.models import ApprovalStatus
 from app.approvals.service import ApprovalError
@@ -143,6 +144,22 @@ async def audit_verify(request: Request, admin: AdminUser, services: ServicesDep
         {"ok": report.ok, "events_checked": report.events_checked},
     )
     return report.to_public()
+
+
+# ------------------------------------------------------------ metrics / policy
+@router.get("/metrics")
+async def metrics(
+    admin: AdminUser, services: ServicesDep, hours: int = Query(default=168, ge=1, le=24 * 90)
+) -> dict[str, Any]:
+    """Aggregates over the audit log for the dashboard (metadata only)."""
+    events, truncated = await services.audit.events_since(window_start(hours))
+    return compute_metrics(events, hours) | {"truncated": truncated}
+
+
+@router.get("/policy")
+async def policy(admin: AdminUser, services: ServicesDep) -> dict[str, Any]:
+    """The active policy (read-only)."""
+    return services.guard.policy.model_dump(mode="json")
 
 
 # ----------------------------------------------------------------------- users

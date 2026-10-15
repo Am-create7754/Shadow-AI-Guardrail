@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from app.api.deps import ServicesDep
 from app.api.errors import ApiError
+from app.api.routes.dashboard import dashboard_available
 
 router = APIRouter(tags=["health"])
 
@@ -20,7 +21,9 @@ async def favicon() -> Response:
 
 @router.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root(request: Request) -> Response:
-    """Send browsers to the interactive docs (when enabled, i.e. outside production)."""
+    """Send browsers to the dashboard if built, else to the docs (outside production)."""
+    if dashboard_available(request):
+        return RedirectResponse("/app/")
     if request.app.docs_url:
         return RedirectResponse(request.app.docs_url)
     return Response(status_code=404)

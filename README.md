@@ -13,11 +13,12 @@ model output and writes a tamper-evident audit trail.
 "Fix this connection string: db_password=[PASSWORD_1]"
 ```
 
-> **Current phase:** Phases 1-4 are complete: detection + policy engine,
+> **Current phase:** Phases 1-5 are complete: detection + policy engine,
 > tamper-evident audit log, the HTTP gateway (auth, approvals, OpenAI-compatible
-> endpoint), and output security (real OpenAI-compatible provider, answer
-> redaction, insecure-code checks, leak-safe streaming). Dashboards and the
-> browser extension are planned.
+> endpoint), output security (real OpenAI-compatible provider, answer
+> redaction, insecure-code checks, leak-safe streaming) and the web dashboard
+> (developer playground, approvals, API keys; admin overview, approval queue,
+> audit log with verification, users, policy). The browser extension is planned.
 > See [docs/STATUS.md](docs/STATUS.md) for exactly what works and how it was verified.
 
 ## Repository layout
@@ -41,6 +42,10 @@ backend/
   evaluation/               synthetic generators, labeled datasets, metrics script
   tests/                    pytest + Hypothesis + ReDoS suites
   scripts/check.ps1         all quality gates
+frontend/                   React 19 + TypeScript + Vite dashboard (served by the gateway at /app)
+  src/api/                  typed API client (token in memory only, SSE parser)
+  src/pages/                playground, approvals, API keys; admin/* pages
+  src/components/           UI primitives, guardrail visualisations (text-only rendering)
 docs/                       architecture, status, API, evaluation report, audit design
 ```
 
@@ -74,6 +79,19 @@ Run the gateway (see [docs/API.md](docs/API.md)):
 .venv\Scripts\python -m app.api.manage create-user admin --role admin
 .venv\Scripts\uvicorn --factory app.api.app:create_app --host 127.0.0.1 --port 8000
 ```
+
+Dashboard (requires Node.js 20.19+ or 22.12+), from the repository root:
+
+```powershell
+cd frontend
+npm ci
+npm run build        # the gateway now serves it at http://127.0.0.1:8000/app/
+npm test             # Vitest component and client tests
+```
+
+For live development, run `npm run dev` (http://localhost:5173/app/) next to the
+gateway; API calls are proxied to it. The session token is held in memory only,
+so reloading the page signs you out.
 
 Audit log (see [docs/AUDIT.md](docs/AUDIT.md)):
 

@@ -448,6 +448,31 @@ class AuditLog:
         async with self.engine.connect() as conn:
             return int((await conn.execute(select(func.count()).select_from(EVENTS))).scalar_one())
 
+    async def events_since(
+        self, since: str, *, limit: int = 50_000
+    ) -> tuple[list[AuditRecord], bool]:
+        """Events recorded at or after the ISO timestamp ``since``, oldest first.
+
+        At most ``limit`` events - the **newest** ones, so a busy window loses its
+        oldest part rather than its most recent - plus whether it was truncated.
+        """
+        stmt = (
+            select(EVENTS)
+            .where(EVENTS.c.recorded_at >= since)
+            .order_by(EVENTS.c.seq.desc())
+            .limit(limit + 1)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(stmt)).mappings().all()
+        truncated = len(rows) > limit
+        out = []
+        for r in reversed(rows[:limit]):
+            try:
+                out.append(AuditRecord(**(dict(r) | {"data": json.loads(r["data"])})))
+            except (ValueError, TypeError):
+                continue  # malformed rows are reported by verify(), not here
+        return out, truncated
+
     async def list_events(
         self,
         *,

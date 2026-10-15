@@ -2,9 +2,9 @@ name: backend
 
 on:
   push:
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", ".github/workflows/backend.yml", ".github/scripts/**"]
   pull_request:
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", ".github/workflows/backend.yml", ".github/scripts/**"]
 
 permissions:
   contents: read
@@ -24,6 +24,8 @@ jobs:
       GUARDRAIL_ENVIRONMENT: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -33,4 +35,7 @@ jobs:
       - run: python -m ruff check .
       - run: python -m ruff format --check .
       - run: python -m mypy
-      - run: python -m pytest -q
+      - run: python -m pytest -q -rf --junitxml=junit.xml
+      - name: Report failing tests as annotations
+        if: failure()
+        run: python ../.github/scripts/junit_annotations.py junit.xml

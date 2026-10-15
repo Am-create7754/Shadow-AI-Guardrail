@@ -123,7 +123,7 @@ class EntropyDetector:
                 end=o_end,
                 value=token,
                 explanation=(
-                    f"High-entropy string ({ent:.2f} bits/char, length {len(token)})"
+                    f"High-entropy string ({ent:.2f} bits/char)"
                     + (" near a credential keyword" if has_context else "")
                 ),
             )

@@ -49,6 +49,8 @@ class Gateway:
 
 @contextmanager
 def gateway(tmp_path: Path, **overrides: Any) -> Iterator[Gateway]:
+    # Independent of whether frontend/dist happens to be built on this machine.
+    overrides.setdefault("dashboard_dir", None)
     settings = Settings(
         environment=Environment.TEST,
         database_url="sqlite+aiosqlite:///" + (tmp_path / "gw.db").as_posix(),

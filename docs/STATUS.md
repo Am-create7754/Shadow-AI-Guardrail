@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-10-15 · Current phase: **Phase 4 complete → Phase 5 next**_
+_Last updated: 2026-10-15 · Current phase: **Phase 5 complete → Phase 6 next**_
 
 Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ not started
 
@@ -13,7 +13,7 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | 2 | Canonical audit events, HMAC chain, verification, checkpoints | ✅ |
 | 3 | FastAPI gateway, auth, rate limits, mock provider | ✅ |
 | 4 | Real provider adapter, output inspection, streaming | ✅ |
-| 5 | Developer portal + admin dashboard (React) | ⬜ |
+| 5 | Developer portal + admin dashboard (React) | ✅ |
 | 6 | Chrome MV3 extension | ⬜ |
 | 7 | Hardening, load and security testing | ⬜ |
 | 8 | Academic deliverables (SRS, diagrams, STRIDE, report) | ⬜ |
@@ -63,14 +63,26 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | Output policy: secrets/PII in answers redacted, private keys block the answer, candidate cap fails closed | `tests/test_output_inspection.py`, `test_api_output.py` |
 | Leak-safe streaming (`stream=true`, OpenAI SSE format): never releases part of a secret; remembers secrets for later repeats; bounded held text and near-linear cost | Hypothesis properties (stream == batch, no 8-char secret prefix), `test_output_review_regressions.py` performance tests |
 | Insecure-code checks: 19 CWE-tagged rules over fenced blocks (backtick and tilde fences, unclosed final blocks); annotate or block mode, incl. while streaming | `test_output_inspection.py` (19 positive, 15 negative cases, ReDoS), regression tests |
+| **Phase 5** — React 19 + TypeScript dashboard (`frontend/`): developer playground (decision, findings, exact text sent, streamed answer, output findings, flagged code lines), own approvals with one-time execute, API keys | `frontend/src/**/*.test.ts(x)` (Vitest); live walkthrough below |
+| Admin views: security overview (metrics from audit metadata), approval queue (redacted text only, separation-of-duties errors shown), audit log with pagination, filters and chain verification, users (create, activate/deactivate), read-only policy | live walkthrough; API: `tests/test_api_dashboard_endpoints.py` |
+| Session token in memory only (no web storage, no cookies); 401 ends the session; requests use `credentials: 'omit'` and `no-store` | `client.test.ts` (token never in storage, 401 handling, error normalisation, path encoding) |
+| SSE client parser: events split across arbitrary network chunks, `[DONE]`, in-stream errors | `client.test.ts::chatStream()` |
+| Untrusted text rendered as text only: hostile HTML and markdown links are inert; placeholders highlighted | `guardrail.test.tsx` |
+| Role-gated routes (cosmetic; API enforces), admin pages lazy-loaded, crash containment without echoing error text | `App.test.tsx` |
+| Gateway serves the build at `/app`: strict CSP (no inline script/eval), explicit MIME types, allow-listed extensions, traversal-proof, SPA fallback, immutable asset caching; `/` redirects to the dashboard when built | `tests/test_api_dashboard_static.py` (incl. 5 encoded traversal attempts) |
+| Metrics and policy endpoints admin-only, metadata only (no prompt text), window validated | `tests/test_api_dashboard_endpoints.py` |
+| Chat responses describe the caller's own request: public findings (no values/offsets) and the exact sanitized messages sent | `test_chat_response_explains_what_was_forwarded`, `test_blocked_response_has_findings_but_no_sanitized_text` |
 
 ## Latest test results
 
 Command: `backend\scripts\check.ps1` (Windows PowerShell)
 
-- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 64 files
-- pytest: **645 passed, 5 skipped** (the 5 live-provider tests are opt-in and
+- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 67 files
+- pytest: **685 passed, 5 skipped** (the 5 live-provider tests are opt-in and
   passed separately against Gemini). Un-awaited coroutines fail the suite.
+- Frontend (`frontend\scripts\check.ps1`): oxlint (warnings are errors) pass,
+  `tsc` strict pass, Vitest **28 passed**, production build pass, `npm audit`: 0
+  vulnerabilities.
 
 ## Independent security review (Phase 1)
 
@@ -215,6 +227,70 @@ with no warnings; an 11-step live walkthrough against Google Gemini passed
 BLOCK, approval hold → approve → execute, model allow-list, audit verify, no
 secrets in the audit log); the server log contained no errors and no prompt text.
 
+## Independent security review (Phase 5)
+
+A separate reviewer audited the dashboard, the static-file route, the metrics
+and policy endpoints, the chat-response additions and the CI changes, with
+experiments against a test gateway.
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 1 | **High** (Windows) | `/app/{path}` called `resolve()` on the request path **before** the containment check, without authentication: `/app///host/share/x.js` or `%5c%5c` forms made Windows open a UNC path (SMB to an attacker host → NTLM hash leak, blind SSRF); device and drive paths also reached the filesystem. Nothing outside `dist` was ever *served*. | The request path never touches the filesystem: the build is scanned into a manifest (rescanned only when `index.html` changes; strict segment syntax; links leaving `dist` skipped) and only exact matches are served | `test_request_path_never_reaches_the_filesystem` (8 UNC/device/drive/ADS/NUL forms, filesystem spy; verified to fail on the old code), `test_traversal_to_allow_listed_type_is_refused` (`.js` target outside dist - the old tests only probed `.txt`, which the extension allow-list refused anyway) |
+| 2 | Medium | `prompt.inspected` (dry runs) counted as requests: "Inspect only" inflated requests, protection rate and entity counts; inspect-then-send counted twice | Excluded; reported separately as `inspections` | `test_inspect_only_is_not_counted_as_a_request` |
+| 3 | Medium | Metrics read the **oldest** 50k events of a window silently, so a busy window showed stale data; `recorded_at` unindexed (full scans every refresh) | Newest events kept, `truncated` flag shown in the UI; index on `recorded_at` (migration 0003); refresh every 60 s | `test_events_since_keeps_newest_and_reports_truncation`; migration drift test |
+| 4 | Low | Annotation titles not escaped for `:`/`,`; step crashed when `junit.xml` was missing | Property escaping; missing file tolerated | manual run on sample JUnit |
+| 5 | Low | The stream reader was not cancelled on `[DONE]`, error events or bad JSON, and leaving the playground did not abort the stream, so the provider kept generating | `finally { await reader.cancel() }`; abort on unmount (also covers logout) | `releases the connection on [DONE], error events and malformed data` (verified to fail without the fix) |
+| 6 | Low | Entropy explanations returned to clients included the value's length | Removed | `test_public_explanations_do_not_reveal_value_length` |
+| 7 | Info | `/v1/admin/policy` shows custom confidential terms to every admin | Accepted: admins are trusted with policy contents | - |
+| 8 | Info | Checkout kept its token; actions pinned to tags | `persist-credentials: false`; SHA pinning left for Phase 7 | - |
+| 9 | Info | No `Permissions-Policy` | Added to dashboard responses (camera, microphone, geolocation, payment, usb off); Trusted Types left for Phase 7 | `test_dashboard_has_permissions_policy` |
+
+Confirmed sound by the reviewer: no file outside `dist` served by any tested
+form (encoded `..`, absolute paths, a junction, NUL, `CON.js`, `::$DATA`);
+dashboard CSP without inline/eval and no inline script in the bundle; metrics
+and policy admin-only and metadata-only; approval executions not double
+counted; `findings` without offsets and no `sanitized_messages` on BLOCK; token
+only in memory, `credentials: 'omit'`, cache cleared on logout/401; no
+`dangerouslySetInnerHTML`/`innerHTML`/model-derived `href`; least-privilege CI
+with no untrusted expressions in `run:`.
+
+## Phase 5 live walkthrough (2026-10-15, gateway serving the build, Gemini provider)
+
+Developer `ui_dev` and admins `ui_admin`/`ui_admin2` were created with random
+passwords for this run (stored only in the local dev data folder).
+
+| Step | Result |
+|---|---|
+| `/` → `/app/`; login form; deep link `/app/admin/approvals` survives login | ✅ |
+| Password prompt, streamed: model received only `[PASSWORD_1]`; decision card, findings, answer with code blocks | ✅ |
+| Card number → Blocked card, "nothing was sent"; no provider call | ✅ |
+| Confidential marker → held; shown as "Text held for review (not sent)" | ✅ (label fixed during the run) |
+| Admin approval queue shows redacted text only; approve → "Decided by ui_admin" | ✅ |
+| Audit log: metadata only; "Verify integrity" → chain intact; verification event appears | ✅ (auto-refresh added during the run) |
+| Overview charts, users, policy pages; developers see no admin navigation | ✅ |
+| All 8 pages at 375 px: no horizontal page scroll, no crash, scroll resets per page | ✅ after fixes below |
+| No CSP violations in the console; server log contains paths/status codes only | ✅ |
+
+Defects found by the walkthrough and fixed: (1) long code lines widened CSS grid
+columns past a phone screen (implicit grid tracks have `min-width: auto`) - every
+responsive grid now has an explicit `grid-cols-1` base; (2) an effect written as
+`() => window.scrollTo(0, 0)` returned the Promise that new Chromium versions
+return from `scrollTo`, and React called it as a cleanup function, blanking the
+app - block body plus an error boundary around each page; (3) the misleading
+"left the gateway" label on held requests.
+
+## CI status
+
+Commit `dfd5945` fixed the install step (all four jobs now pass install, lint,
+format and mypy), but **pytest fails on all four GitHub-hosted jobs** while it
+passes locally in every reproduction tried: the dev tree, a fresh clone with a
+fresh venv, an empty data directory, and `CI`/`GITHUB_ACTIONS`/
+`GUARDRAIL_ENVIRONMENT=test` set (647 passed). The public annotations do not
+include test output and job logs require authentication, so the workflow now
+writes failing test names and messages as annotations
+(`.github/scripts/junit_annotations.py`). The cause will be visible after the
+next push. A frontend workflow (lint, typecheck, tests, build, `npm audit`) was added.
+
 ## Detection quality (5 seeds; see `docs/EVALUATION.md`)
 
 | Set | Samples | Entity recall | Finding precision | F1 | Benign-prompt FP rate | Leaked values |
@@ -281,6 +357,11 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 19. Live testing covers one real provider (Google Gemini via its OpenAI-compatible
     endpoint); OpenAI itself is untested live (account without credit).
     Free-tier providers may log prompts - the gateway only ever sends redacted text.
+20. Dashboard: a page reload signs the user out (token in memory only, by design).
+    Policy is read-only in the UI (edit the YAML and restart). Metrics are computed
+    per request from at most 50,000 audit events in the window. Frontend tests are
+    unit/component tests; the end-to-end check was a manual live walkthrough, not
+    an automated browser suite.
 
 ## Environment notes (Windows)
 
@@ -292,15 +373,11 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 
 ## Next steps (exact)
 
-**Phase 5 — developer portal and administrator dashboard (React + Vite + TypeScript)**
-
-1. Scaffold `frontend/` (Vite, React, TypeScript, Tailwind), API client with the
-   gateway's error format, session handling (token in memory, logout).
-2. Developer view: prompt playground showing the inspection (findings, risk,
-   sanitized text), streamed answers, output findings and code warnings; own
-   approval requests and API keys.
-3. Administrator view (role-gated in the UI *and* enforced by the API): approval
-   queue with review/approve/deny, searchable audit log, chain verification,
-   user management, live metrics (entities, actions, risk over time).
-4. Accessibility, responsive layout, no secrets in browser storage, strict CSP.
-5. Component and end-to-end tests; independent security review.
+1. Push, then read the CI annotations for the backend job (see "CI status"
+   above) and fix whatever fails only on GitHub's runners.
+2. **Phase 6 — Chrome MV3 extension:** least-privilege manifest (only the
+   gateway origin and the supported AI sites), content script that sends the
+   prompt to `/v1/inspect` before submission on supported sites, shows the
+   decision and offers the redacted text; options page for the gateway URL and an
+   API key kept in `chrome.storage.session`; no remote code; tests for the
+   message flow; honest documentation of what it cannot cover.

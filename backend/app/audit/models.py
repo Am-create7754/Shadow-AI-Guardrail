@@ -30,7 +30,7 @@ class AuditEventRow(Base):
     seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     event_id: Mapped[str] = mapped_column(String(32), unique=True)
     occurred_at: Mapped[str] = mapped_column(String(32), index=True)
-    recorded_at: Mapped[str] = mapped_column(String(32))
+    recorded_at: Mapped[str] = mapped_column(String(32), index=True)  # dashboard windows
     event_type: Mapped[str] = mapped_column(String(64), index=True)
     actor: Mapped[str] = mapped_column(String(128), index=True)
     request_id: Mapped[str | None] = mapped_column(String(64), index=True)

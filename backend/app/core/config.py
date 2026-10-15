@@ -127,6 +127,8 @@ class Settings(BaseSettings):
     login_rate_limit_per_minute: int = Field(default=10, ge=1, le=1_000)
     # Browser origins allowed to call the API (the dashboard). Comma-separated.
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Built dashboard (frontend `npm run build`) served at /app; None disables it.
+    dashboard_dir: Path | None = BACKEND_DIR.parent / "frontend" / "dist"
     approval_ttl_minutes: int = Field(default=24 * 60, ge=1, le=30 * 24 * 60)
     # Which AI provider adapter to use: "mock" (no key, no network) or "openai"
     # (any OpenAI-compatible API: OpenAI, Anthropic's compatibility endpoint, Ollama...).

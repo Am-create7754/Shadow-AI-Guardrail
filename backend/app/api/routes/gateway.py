@@ -359,6 +359,24 @@ async def _stream(
     )
 
 
+MOCK_MODELS = ("mock-echo", "mock-leak", "mock-code", "mock-error", "mock-timeout",
+               "mock-ratelimit")  # fmt: skip
+
+
+@router.get("/models")
+async def list_models(user: CurrentUser, services: ServicesDep) -> dict[str, Any]:
+    """OpenAI-compatible model list: the models this gateway lets clients use."""
+    names = (
+        MOCK_MODELS
+        if services.provider.name == "mock"
+        else tuple(services.settings.provider_model_list)
+    )
+    return {
+        "object": "list",
+        "data": [{"id": n, "object": "model", "owned_by": services.provider.name} for n in names],
+    }
+
+
 @router.post("/inspect")
 async def inspect(
     body: InspectRequest, request: Request, user: CurrentUser, services: ServicesDep
@@ -387,7 +405,16 @@ async def chat_completions(
         "risk_score": insp.decision.risk_score,
         "placeholders": insp.placeholders,
         "reasons": list(insp.decision.reasons),
+        # Detection metadata only (types, rules, confidence) - never values.
+        "findings": [
+            {k: v for k, v in d.to_public().items() if k not in ("start", "end", "length")}
+            for d in insp.decision.findings
+        ],
     }
+    if insp.action is not Action.BLOCK:
+        # The caller's own prompt as it was (or would be) forwarded: their text
+        # minus the secrets. Lets developers see exactly what left the gateway.
+        guardrail["sanitized_messages"] = insp.sanitized_texts
 
     if insp.action is Action.BLOCK:
         await _audit_or_fail(services, request, "chat.blocked", user, summary)

@@ -161,10 +161,38 @@ Released text is redacted with the shared allocator. Property tests check that,
 for random text and random chunking, the stream never contains any 8-character
 prefix of a secret and equals the non-streamed result.
 
-### 3.8 Dashboards, extension [planned - Phases 5-6]
+### 3.8 Web dashboard - `frontend/` [built]
 
-React dashboards (Phase 5) and a Chrome MV3 extension that talks only to the
-configured gateway (Phase 6).
+React 19 + TypeScript (strict) + Vite + Tailwind, TanStack Query for data,
+Recharts for charts. Built once (`npm run build`) and served by the gateway at
+`/app` (`backend/app/api/routes/dashboard.py`), so the browser talks to one
+origin and no CORS is needed in production.
+
+- **Session:** the bearer token lives in a module variable of the API client -
+  never in localStorage, sessionStorage or cookies (`credentials: 'omit'`). A
+  reload signs the user out, by design: injected script can never recover a
+  token from storage. A 401 from any call ends the session.
+- **Rendering:** prompts, redacted text and model answers are rendered as React
+  text nodes only (no `dangerouslySetInnerHTML`, no markdown-to-HTML, no links
+  from model output). Code blocks are split by a fence parser and flagged lines
+  highlighted by the server's code findings.
+- **Roles:** admin pages are hidden for developers, but every admin call is
+  enforced by the API; the UI guard is cosmetic.
+- **Serving:** the request path is never passed to the filesystem (on Windows,
+  merely resolving `//host/share/...` opens an SMB connection). The build is
+  scanned into a manifest of allow-listed files, rescanned when `index.html`
+  changes, and only exact matches are served with explicit MIME types; other paths under `/app` get
+  `index.html` (client-side routes), while missing assets are real 404s.
+  Content-Security-Policy for the dashboard: `script-src 'self'; style-src
+  'self'; connect-src 'self'; frame-ancestors 'none'` (no inline script or
+  eval). Hashed assets are cached immutably; `index.html` is `no-store`.
+- **Metrics:** `/v1/admin/metrics` aggregates audit events (entity types, rule
+  ids, decisions, risk, models) - the same metadata-only data the audit log
+  already holds.
+
+### 3.9 Browser extension [planned - Phase 6]
+
+A Chrome MV3 extension that talks only to the configured gateway.
 
 ## 4. Key decisions
 

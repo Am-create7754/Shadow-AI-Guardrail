@@ -24,7 +24,7 @@ from app.api.deps import Services
 from app.api.errors import install_error_handlers
 from app.api.middleware import GatewayMiddleware
 from app.api.ratelimit import RateLimiter
-from app.api.routes import admin, auth, gateway, health
+from app.api.routes import admin, auth, dashboard, gateway, health
 from app.approvals.service import ApprovalService
 from app.audit.service import AuditLog
 from app.auth.service import AuthService
@@ -103,6 +103,6 @@ def create_app(settings: Settings | None = None, *, provider: Provider | None = 
     )
     # Added last = outermost: size limit and request id apply to everything.
     app.add_middleware(GatewayMiddleware, max_body_bytes=settings.max_body_bytes)
-    for module in (health, auth, gateway, admin):
+    for module in (health, auth, gateway, admin, dashboard):
         app.include_router(module.router)
     return app

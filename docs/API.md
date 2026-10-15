@@ -52,6 +52,8 @@ $h = @{ Authorization = "Bearer $($login.access_token)" }
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | GET | `/health`, `/ready` | – | Liveness / database readiness |
+| GET | `/app/...` | – | The built web dashboard (static files; own strict CSP). `/` redirects here when it is built |
+| GET | `/v1/models` | any | Models this gateway allows (OpenAI `list` format) |
 | POST | `/v1/auth/login` | – | Username + password → session token (rate limited per client IP) |
 | POST | `/v1/auth/logout` | any | Revoke all of the caller's session tokens (API keys unaffected) |
 | GET | `/v1/me` | any | Current user |
@@ -66,6 +68,8 @@ $h = @{ Authorization = "Bearer $($login.access_token)" }
 | GET | `/v1/admin/audit/verify` | admin | Verify chain integrity |
 | GET / POST | `/v1/admin/users` | admin | List / create users |
 | PATCH | `/v1/admin/users/{id}` | admin | Activate / deactivate |
+| GET | `/v1/admin/metrics?hours=N` | admin | Dashboard metrics for the last N hours (1-2160), computed from audit events: decisions over time, top entities and rules, answer leaks, code findings, risk bands, models. Metadata only - never prompt text |
+| GET | `/v1/admin/policy` | admin | The active policy (read-only) |
 
 ## 4. Chat completions
 
@@ -94,7 +98,10 @@ sensitive, because it is stored with held requests and in audit events.
 
 A successful response is a normal `chat.completion` object plus an extra
 `guardrail` field (`request_id`, `action`, `risk_score`, `placeholders`,
-`reasons`, `output_inspected`, `output`). `guardrail.output` describes what the
+`reasons`, `findings`, `sanitized_messages`, `output_inspected`, `output`).
+`findings` lists detected entity types, rules, severity and confidence (no
+values, no offsets); `sanitized_messages` is exactly the text that was sent to
+the provider. Both describe the caller's own request. `guardrail.output` describes what the
 gateway did to the **model's answer** (see section 5).
 If the post-delivery audit write fails, the answer is still returned with
 `audit_incomplete: true` (the pre-forward audit event exists).
