@@ -47,10 +47,13 @@ addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
 markers = [
     "slow: long-running tests (ReDoS / performance)",
+    "live: calls the real AI provider from backend/.env (opt-in, costs money)",
 ]
 filterwarnings = [
     # Starlette 1.x prefers httpx2 for its TestClient; httpx works and is what we ship.
     "ignore:Using `httpx` with `starlette.testclient`",
+    # An un-awaited coroutine is a bug (e.g. a stream that never gets closed).
+    "error:coroutine .* was never awaited:RuntimeWarning",
 ]
 
 [tool.ruff]

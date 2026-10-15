@@ -88,10 +88,12 @@ def test_secret_in_any_role_is_inspected(gw: Gateway) -> None:
     assert gw.provider.calls == []
 
 
-def test_streaming_rejected_explicitly(gw: Gateway) -> None:
-    r = gw.chat("dev1", "hi", stream=True)
-    assert r.status_code == 400
-    assert r.json()["error"]["type"] == "streaming_not_supported"
+def test_streaming_still_enforces_input_policy(gw: Gateway) -> None:
+    """Input decisions happen before any stream starts: a blocked prompt gets a
+    normal JSON 403, never an event stream, and never reaches the provider."""
+    r = gw.chat("dev1", PRIVATE_KEY, stream=True)
+    assert r.status_code == 403
+    assert r.headers["content-type"].startswith("application/json")
     assert gw.provider.calls == []
 
 

@@ -13,10 +13,11 @@ model output and writes a tamper-evident audit trail.
 "Fix this connection string: db_password=[PASSWORD_1]"
 ```
 
-> **Current phase:** Phases 1-3 are complete: detection + policy engine,
-> tamper-evident audit log, and the HTTP gateway (auth, approvals, mock provider,
-> OpenAI-compatible endpoint). Output inspection, dashboards and the browser
-> extension are planned.
+> **Current phase:** Phases 1-4 are complete: detection + policy engine,
+> tamper-evident audit log, the HTTP gateway (auth, approvals, OpenAI-compatible
+> endpoint), and output security (real OpenAI-compatible provider, answer
+> redaction, insecure-code checks, leak-safe streaming). Dashboards and the
+> browser extension are planned.
 > See [docs/STATUS.md](docs/STATUS.md) for exactly what works and how it was verified.
 
 ## Repository layout
@@ -30,7 +31,8 @@ backend/
     api/                    FastAPI gateway: routes, auth deps, middleware, rate limits
     auth/                   users, Argon2 passwords, API keys, JWT sessions
     approvals/              approval workflow (AES-GCM encrypted held prompts)
-    providers/              provider interface + deterministic mock provider
+    providers/              provider interface, OpenAI-compatible adapter, mock provider
+    output/                 answer inspection, leak-safe stream guard, insecure-code checks
     audit/                  HMAC-chained audit log, signed checkpoints, verifier, CLI
     db/                     async SQLAlchemy engine (SQLite hardening)
     migrations/             Alembic migrations

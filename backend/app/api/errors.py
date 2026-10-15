@@ -20,7 +20,14 @@ from app.providers.base import ProviderError
 
 logger = logging.getLogger("guardrail.api")
 
-_PROVIDER_STATUS = {"timeout": 504, "rate_limited": 503, "unavailable": 502, "bad_response": 502}
+_PROVIDER_STATUS = {
+    "timeout": 504,
+    "rate_limited": 503,
+    "unavailable": 502,
+    "bad_response": 502,
+    "bad_request": 400,  # e.g. the provider does not know the model
+    "quota_exhausted": 503,  # the gateway's provider account is out of credit
+}
 _HTTP_TYPES = {
     400: "bad_request",
     401: "unauthorized",

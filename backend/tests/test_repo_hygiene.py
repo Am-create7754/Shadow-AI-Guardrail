@@ -6,6 +6,7 @@ source tree never carries anything that looks like a live credential.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from app.detection.engine import DetectionEngine
@@ -28,12 +29,35 @@ VENDOR_RULES = tuple(
 )
 
 
+def _candidates() -> list[Path]:
+    """Files that are, or would be, committed: tracked files plus untracked files
+    that .gitignore does not exclude. Ignored local files (backend/.env with a
+    real provider key, databases) are deliberately out of scope - they never
+    reach the repository."""
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],  # noqa: S607
+            cwd=REPO,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout.decode("utf-8", "replace")
+        return [REPO / name for name in listed.split("\0") if name]
+    except (OSError, subprocess.SubprocessError):
+        # No git available: walk the tree, never reading real .env files.
+        return [
+            p
+            for p in REPO.rglob("*")
+            if not (p.name.startswith(".env") and p.name != ".env.example")
+        ]
+
+
 def _files() -> list[Path]:
     out = []
-    for p in REPO.rglob("*"):
+    for p in _candidates():
         if any(part in SKIP_DIRS for part in p.parts) or not p.is_file():
             continue
-        if p.suffix in TEXT_SUFFIXES or p.name.startswith(".env"):
+        if p.suffix in TEXT_SUFFIXES or p.name == ".env.example":
             out.append(p)
     return out
 

@@ -111,6 +111,50 @@ class Escalation(_Strict):
     block_at_risk_score: int | None = Field(default=None, ge=1, le=100)
 
 
+class OutputAction(StrEnum):
+    """What to do with sensitive data found in a model's *answer*."""
+
+    ALLOW = "ALLOW"
+    REDACT = "REDACT"  # replace with a placeholder before the client sees it
+    BLOCK = "BLOCK"  # withhold the answer (or stop the stream)
+
+
+class CodeCheckMode(StrEnum):
+    OFF = "off"
+    ANNOTATE = "annotate"  # report findings next to the answer
+    BLOCK = "block"  # withhold answers whose code has findings at/above block_at
+
+
+class CodePolicy(_Strict):
+    mode: CodeCheckMode = CodeCheckMode.ANNOTATE
+    block_at: Severity = Severity.HIGH
+
+    @field_validator("block_at", mode="before")
+    @classmethod
+    def _sev(cls, v: object) -> object:
+        return Severity[v] if isinstance(v, str) else v
+
+
+def _default_output_categories() -> dict[Category, OutputAction]:
+    return {
+        Category.SECRET: OutputAction.REDACT,
+        Category.FINANCIAL: OutputAction.REDACT,
+        Category.PII: OutputAction.REDACT,
+    }
+
+
+class OutputPolicy(_Strict):
+    """Handling of model output. Unlisted categories (e.g. CONFIDENTIAL markers,
+    internal IPs in an explanation) are allowed by default."""
+
+    min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    category_actions: dict[Category, OutputAction] = Field(
+        default_factory=_default_output_categories
+    )
+    entity_actions: dict[EntityType, OutputAction] = Field(default_factory=dict)
+    code: CodePolicy = Field(default_factory=CodePolicy)
+
+
 class PolicyConfig(_Strict):
     version: Literal[1] = 1
     name: str = Field(default="default", max_length=80)
@@ -126,6 +170,7 @@ class PolicyConfig(_Strict):
     custom_terms: list[CustomTerm] = Field(default_factory=list, max_length=500)
     custom_patterns: list[CustomPattern] = Field(default_factory=list, max_length=100)
     entropy: EntropySettings = Field(default_factory=EntropySettings)
+    output: OutputPolicy = Field(default_factory=OutputPolicy)
 
     @model_validator(mode="after")
     def _unique_custom_rule_ids(self) -> PolicyConfig:

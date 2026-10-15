@@ -8,6 +8,7 @@ weaken any policy.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -48,7 +49,8 @@ class ProviderError(RuntimeError):
 
     def __init__(self, kind: str, detail: str) -> None:
         super().__init__(detail)
-        self.kind = kind  # "timeout" | "unavailable" | "rate_limited" | "bad_response"
+        # "timeout" | "unavailable" | "rate_limited" | "bad_response" | "bad_request"
+        self.kind = kind
         self.detail = detail
 
 
@@ -56,5 +58,9 @@ class Provider(Protocol):
     name: str
 
     async def chat(self, request: ProviderRequest) -> ProviderResponse: ...
+
+    def stream(self, request: ProviderRequest) -> AsyncGenerator[str, None]:
+        """Yield the answer as text deltas. Raise ProviderError on failure."""
+        ...
 
     async def aclose(self) -> None: ...

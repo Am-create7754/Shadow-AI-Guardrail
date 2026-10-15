@@ -13,6 +13,7 @@ import warnings
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +38,8 @@ def default_data_dir() -> Path:
 
 # Keys shorter than this are rejected: HMAC-SHA256 keys should carry >=256 bits.
 MIN_KEY_BYTES = 32
+# Hosts that may be reached over plain http without an API key (e.g. Ollama).
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 class Environment(StrEnum):
@@ -107,9 +110,25 @@ class Settings(BaseSettings):
     # Browser origins allowed to call the API (the dashboard). Comma-separated.
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     approval_ttl_minutes: int = Field(default=24 * 60, ge=1, le=30 * 24 * 60)
-    # Which AI provider adapter to use ("mock" needs no key or network).
-    provider: str = Field(default="mock", pattern=r"^[a-z][a-z0-9_]{1,30}$")
-    provider_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+    # Which AI provider adapter to use: "mock" (no key, no network) or "openai"
+    # (any OpenAI-compatible API: OpenAI, Anthropic's compatibility endpoint, Ollama...).
+    provider: str = Field(default="mock", pattern=r"^(mock|openai)$")
+    provider_timeout_seconds: float = Field(default=60.0, gt=0, le=600)  # per network read
+    # Upper bound on one whole provider call, including a slowly dripping stream.
+    provider_total_timeout_seconds: float = Field(default=300.0, gt=0, le=3600)
+    provider_base_url: str = Field(default="https://api.openai.com/v1", max_length=200)
+    # Credential for the upstream provider. Never logged, never sent to clients.
+    provider_api_key: SecretStr | None = None
+    # Models clients may request (comma-separated). Limits cost and stops clients
+    # from smuggling text through the model name. Empty = no restriction (mock only).
+    provider_models: str = "gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano"
+    provider_max_retries: int = Field(default=2, ge=0, le=5)
+    # Largest model response accepted (characters); larger answers are refused.
+    provider_max_output_chars: int = Field(default=200_000, ge=1_000, le=5_000_000)
+
+    @property
+    def provider_model_list(self) -> list[str]:
+        return [m.strip() for m in self.provider_models.split(",") if m.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -137,6 +156,19 @@ class Settings(BaseSettings):
             for name in ("jwt_secret", "api_key_pepper", "data_key"):
                 if getattr(self, name) is None:
                     raise ValueError(f"GUARDRAIL_{name.upper()} must be set in production")
+        if self.provider == "openai":
+            # Parse instead of prefix-matching: "http://localhost.evil.example" and
+            # "http://localhost@evil.example" must not count as local.
+            parsed = urlsplit(self.provider_base_url)
+            if parsed.username is not None or parsed.password is not None:
+                raise ValueError("GUARDRAIL_PROVIDER_BASE_URL must not contain credentials")
+            local = parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS
+            if not (parsed.scheme == "https" and parsed.hostname) and not local:
+                raise ValueError("GUARDRAIL_PROVIDER_BASE_URL must use https (or be localhost)")
+            if self.provider_api_key is None and not local:
+                raise ValueError("GUARDRAIL_PROVIDER_API_KEY is required for provider 'openai'")
+            if not self.provider_model_list:
+                raise ValueError("GUARDRAIL_PROVIDER_MODELS must list at least one model")
         # Every configured key must be strong and distinct from every other key.
         named = {
             name: value.get_secret_value()

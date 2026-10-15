@@ -29,9 +29,9 @@ Client ──► FastAPI gateway [built, Phase 3]
              │ ── REQUIRE_APPROVAL ───────► approval queue, nothing forwarded yet
              │ ── REDACT / ALLOW
              ▼
-           Provider adapter (mock built; real adapter Phase 4)
+           Provider adapter (mock + OpenAI-compatible) [built]
              ▼
-           Guardrail.inspect(response) + output rules [planned, Phase 4]
+           Output inspector / stream guard + code checks [built]
              ▼
            Safe response to client
              └──► Audit event (HMAC-SHA256 chain) [built; written before forwarding]
@@ -138,11 +138,33 @@ BLOCK and REQUIRE_APPROVAL never reach it. Held requests are stored redacted and
 AES-256-GCM-encrypted, decided by a different administrator, executed once by
 the requester, and erased afterwards. Validation errors never echo input.
 
-### 3.7 Providers, output inspection, dashboards, extension [planned - Phases 4-6]
+### 3.7 Providers and output security - `backend/app/providers/`, `backend/app/output/` [built]
 
-A real provider adapter and response inspection (Phase 4), React dashboards
-(Phase 5) and a Chrome MV3 extension that talks only to the configured gateway
-(Phase 6).
+**Providers.** `Provider` is a small protocol (`chat`, `stream`, `aclose`); security
+logic never lives in a provider. `OpenAICompatibleProvider` (httpx) talks to any
+OpenAI-compatible API: key only in the `Authorization` header, no redirects,
+validated and size-capped responses, retries only for transient failures, and
+upstream error bodies never forwarded (at most a short `snake_case` error code).
+`MockProvider` stays the default and the basis of all automated tests.
+
+**Answers.** `OutputInspector` runs the detection engine over the answer and
+applies the policy's `output` section (ALLOW / REDACT / BLOCK per category or
+entity), using a placeholder allocator that reserves every placeholder already
+present in the prompt. Fenced code blocks go through 19 line-based insecure-code
+rules (CWE-tagged); findings are reported or, in block mode, withhold the answer.
+
+**Streams.** `StreamGuard` releases text only up to a *safe cut*: never within the
+newest 128 characters, never inside a run of token characters (a key may still
+be growing - no length assumption), never inside any detection (including an
+open private-key block), and in code-block mode never inside an unclosed fence.
+Released text is redacted with the shared allocator. Property tests check that,
+for random text and random chunking, the stream never contains any 8-character
+prefix of a secret and equals the non-streamed result.
+
+### 3.8 Dashboards, extension [planned - Phases 5-6]
+
+React dashboards (Phase 5) and a Chrome MV3 extension that talks only to the
+configured gateway (Phase 6).
 
 ## 4. Key decisions
 

@@ -33,6 +33,7 @@ from app.core.secrets import resolve_key
 from app.crypto.aead import Aead
 from app.db.engine import create_engine
 from app.guardrail import Guardrail
+from app.output.inspector import OutputInspector
 from app.providers.base import Provider
 from app.providers.factory import build_provider
 
@@ -54,9 +55,11 @@ def create_app(settings: Settings | None = None, *, provider: Provider | None = 
         await asyncio.to_thread(migrate, settings.database_url)
         engine = create_engine(settings.database_url)
         active_provider = provider or build_provider(settings)
+        guard = Guardrail.from_settings(settings)
         app.state.services = Services(
             settings=settings,
-            guard=Guardrail.from_settings(settings),
+            guard=guard,
+            output=OutputInspector(guard.policy, settings),
             audit=AuditLog.from_settings(settings, engine),
             auth=AuthService(
                 engine,

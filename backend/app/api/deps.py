@@ -16,6 +16,7 @@ from app.audit.service import AuditLog
 from app.auth.service import API_KEY_PREFIX, AuthService, User
 from app.core.config import Settings
 from app.guardrail import Guardrail
+from app.output.inspector import OutputInspector
 from app.providers.base import Provider
 
 
@@ -23,6 +24,7 @@ from app.providers.base import Provider
 class Services:
     settings: Settings
     guard: Guardrail
+    output: OutputInspector
     audit: AuditLog
     auth: AuthService
     approvals: ApprovalService

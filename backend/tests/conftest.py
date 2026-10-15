@@ -12,6 +12,12 @@ from app.detection.engine import DetectionEngine
 from app.guardrail import Guardrail
 from app.policy.engine import load_policy
 
+# Never read the developer's backend/.env in tests: it may hold a real provider API
+# key, and tests must be hermetic, offline and free. Live tests load it explicitly.
+Settings.model_config["env_file"] = None
+for _name in [k for k in os.environ if k.startswith("GUARDRAIL_PROVIDER")]:
+    del os.environ[_name]
+
 # Never let tests touch the real per-user data directory (database, keys, anchor).
 _ISOLATED = tempfile.mkdtemp(prefix="guardrail-tests-")
 os.environ.setdefault("GUARDRAIL_KEYS_DIR", os.path.join(_ISOLATED, "keys"))

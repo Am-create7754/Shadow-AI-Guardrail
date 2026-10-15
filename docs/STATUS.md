@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-10-14 · Current phase: **Phase 3 complete → Phase 4 next**_
+_Last updated: 2026-10-15 · Current phase: **Phase 4 complete → Phase 5 next**_
 
 Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ not started
 
@@ -12,7 +12,7 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | 1 | Detection engine, redaction, policy engine, evaluation | ✅ |
 | 2 | Canonical audit events, HMAC chain, verification, checkpoints | ✅ |
 | 3 | FastAPI gateway, auth, rate limits, mock provider | ✅ |
-| 4 | Real provider adapter, output inspection, streaming | ⬜ |
+| 4 | Real provider adapter, output inspection, streaming | ✅ |
 | 5 | Developer portal + admin dashboard (React) | ⬜ |
 | 6 | Chrome MV3 extension | ⬜ |
 | 7 | Hardening, load and security testing | ⬜ |
@@ -58,14 +58,19 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | Rate limiting: per user, login per IP, bounded memory that fails closed | `test_per_user_rate_limit`, `test_login_rate_limited`, `test_rate_limiter_memory_is_bounded` |
 | Provider abstraction + deterministic mock provider (echo, error, timeout, rate-limit, leak modes); failures mapped, audited, never echoed | `tests/test_gateway_units.py`, `test_provider_failures_mapped_and_audited`, `test_unexpected_provider_exception_is_contained` |
 | Live run with Uvicorn; official OpenAI Python SDK 3.31 works unmodified (blocks surface as `PermissionDeniedError`) | manual, 2026-10-14 (see Phase 3 review section) |
+| **Phase 4** — OpenAI-compatible provider adapter (OpenAI, Gemini, Ollama...): key only in the auth header, no redirects, allow-listed error codes, validated and byte-capped responses, retries only for transient errors, total deadline | `tests/test_openai_adapter.py` (simulated upstream), `test_output_review_regressions.py` |
+| Live provider: verified against Google Gemini (`gemini-3.5-flash-lite`) end to end - prompt redaction, answer redaction, streaming, model allow-list | `tests/test_live_provider.py` (opt-in, 5/5 passed 2026-10-15) |
+| Output policy: secrets/PII in answers redacted, private keys block the answer, candidate cap fails closed | `tests/test_output_inspection.py`, `test_api_output.py` |
+| Leak-safe streaming (`stream=true`, OpenAI SSE format): never releases part of a secret; remembers secrets for later repeats; bounded held text and near-linear cost | Hypothesis properties (stream == batch, no 8-char secret prefix), `test_output_review_regressions.py` performance tests |
+| Insecure-code checks: 19 CWE-tagged rules over fenced blocks (backtick and tilde fences, unclosed final blocks); annotate or block mode, incl. while streaming | `test_output_inspection.py` (19 positive, 15 negative cases, ReDoS), regression tests |
 
 ## Latest test results
 
 Command: `backend\scripts\check.ps1` (Windows PowerShell)
 
-- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 60 files
-- pytest: **511 passed** (Phases 1-3; includes slow ReDoS and multi-process
-  tests, 3 Hypothesis properties × 150 examples, 92 gateway tests)
+- ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 64 files
+- pytest: **645 passed, 5 skipped** (the 5 live-provider tests are opt-in and
+  passed separately against Gemini). Un-awaited coroutines fail the suite.
 
 ## Independent security review (Phase 1)
 
@@ -162,6 +167,36 @@ admin-route denial, audit verify); the server log contained no prompt text and
 no tracebacks. The official `openai` Python SDK (3.31) worked against
 `/v1/chat/completions` unmodified.
 
+## Independent security review (Phase 4)
+
+A fourth reviewer agent attacked the output path with synthetic secrets and a
+simulated upstream. Each confirmed issue became a failing test first
+(`tests/test_output_review_regressions.py`, 16 failing before the fixes):
+
+| # | Confirmed issue | Fix |
+|---|---|---|
+| 1 | Streaming CPU DoS: once text was held, every chunk triggered a full rescan (20k random chars in 1-char chunks: 512 s; block-mode code: up to 267 s) | Geometric rescan back-off, 16 KiB held-text cap (fail closed), incremental fence parsing: now 0.2-0.8 s |
+| 2 | Output path ignored the scan's candidate cap: a card number after 5,100 emails was returned in clear | Answers and streams fail closed when the scan is truncated |
+| 3 | A secret repeated far from its context was redacted in full answers but released in streams | Stream remembers every detected secret and redacts later repeats |
+| 4 | A very long URL password containing `!` leaked a prefix while streaming | Hold any run of non-whitespace, not only "token" characters |
+| 5 | Code block mode bypassable: unclosed final fence, a stray inline ``` shifting pairing, `~~~` fences | CommonMark-style line-anchored fence parser; unclosed blocks checked |
+| 6 | Client disconnect skipped the closing audit event and could leave a broken DB connection (next request 500) | Closing audit written in its own task; `chat.stream_aborted` event; provider stream always closed |
+| 7 | Adapter read whole bodies before size checks; non-content stream events and single huge lines were unbounded; no total deadline | Byte-capped reads, own line splitter with per-line cap, total deadline |
+| 8 | `http://localhost.evil.example` / `http://localhost@evil` counted as "local" (key could go over plain http) | URL parsed; exact loopback host names; credentials in URL rejected |
+| 9 | Placeholder collision with model-written `[EMAIL_1]`; arbitrary upstream error codes echoed; upstream `model`/`finish_reason` trusted | Reserve placeholders from streamed text; allow-listed error codes; model and finish reason not trusted |
+
+Also fixed: executing an approval re-checks the model allow-list; the provider
+stream is closed even if the response body never starts. Found while fixing:
+Starlette ran a bound `aclose` method in a thread, so the stream was never
+actually closed (an un-awaited coroutine) - now a real coroutine, and
+un-awaited coroutines fail the test suite.
+
+Live provider notes (2026-10-15): the configured OpenAI account returned
+`credit_balance_exhausted` (key valid, no credit) - now reported immediately as
+`503 provider_quota_exhausted` without retries. Google Gemini works: the
+originally suggested model names were retired for new users, so the allowed
+models were taken from the key's own model list.
+
 ## Detection quality (5 seeds; see `docs/EVALUATION.md`)
 
 | Set | Samples | Entity recall | Finding precision | F1 | Benign-prompt FP rate | Leaked values |
@@ -209,9 +244,15 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
     SQLite is verified.
 14. Verifying event MACs needs the symmetric audit key; only checkpoint
     verification works with a public key alone.
-15. **Model output is not inspected yet** (`output_inspected: false`); a provider
-    could return secrets or unsafe code unchanged until Phase 4. Streaming is
-    rejected rather than inspected.
+15. Output-path limits: in a **stream**, a value that first appears bare and only
+    later becomes recognisable as a secret may already have been released;
+    a single unbroken run longer than 16 KiB ends the stream (fail closed).
+    Text released before an output block or provider error mid-stream has
+    already reached the client (it was checked, but the answer is incomplete).
+    Code checks are line-based patterns over fenced blocks - indented code and
+    unfenced code are not checked, and a clean result is not a proof of safety.
+    Output findings below the 0.6 confidence threshold (e.g. short random
+    tokens without a keyword) pass, as for prompts.
 16. Rate limits are per process; several workers each enforce their own budget.
     `X-Forwarded-For` is not trusted, so behind a reverse proxy all clients share
     the proxy's login budget until trusted-proxy support is configured.
@@ -219,7 +260,9 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
     sub-second precision only.
 18. Separation of duties relies on recorded account creators; CLI-bootstrapped
     users have none, and anyone with server or database access is outside it.
-19. Only a deterministic mock provider exists; no real AI service has been called.
+19. Live testing covers one real provider (Google Gemini via its OpenAI-compatible
+    endpoint); OpenAI itself is untested live (account without credit).
+    Free-tier providers may log prompts - the gateway only ever sends redacted text.
 
 ## Environment notes (Windows)
 
@@ -231,18 +274,15 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 
 ## Next steps (exact)
 
-**Phase 4 — real provider and output security**
+**Phase 5 — developer portal and administrator dashboard (React + Vite + TypeScript)**
 
-1. OpenAI-compatible HTTP provider adapter (httpx, timeouts, retries with
-   backoff, error mapping without echoing upstream bodies), usable with OpenAI,
-   Anthropic's OpenAI-compatible endpoint or a local Ollama server; credentials
-   only from configuration. Live testing needs an API key or a local Ollama
-   install - the mock provider remains the default.
-2. Response inspection with the same engine: secrets or PII in model output are
-   redacted (configurable output policy), and the `mock-leak` model proves it.
-3. Insecure-code checks on generated code (e.g. `eval`/`exec`, `shell=True`,
-   SQL string building, `verify=False`, hard-coded credentials, weak hashes),
-   reported as findings and optionally annotated.
-4. Streaming with chunk-boundary-safe inspection: hold back a sliding window so
-   a secret split across chunks is never released before it can be checked.
-5. Independent security review of Phase 4.
+1. Scaffold `frontend/` (Vite, React, TypeScript, Tailwind), API client with the
+   gateway's error format, session handling (token in memory, logout).
+2. Developer view: prompt playground showing the inspection (findings, risk,
+   sanitized text), streamed answers, output findings and code warnings; own
+   approval requests and API keys.
+3. Administrator view (role-gated in the UI *and* enforced by the API): approval
+   queue with review/approve/deny, searchable audit log, chain verification,
+   user management, live metrics (entities, actions, risk over time).
+4. Accessibility, responsive layout, no secrets in browser storage, strict CSP.
+5. Component and end-to-end tests; independent security review.

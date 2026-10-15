@@ -105,7 +105,7 @@ def test_failed_logins_from_one_client_do_not_lock_out_others(tmp_path: Path) ->
 
 # 4. unexpected exceptions --------------------------------------------------------
 class ExplodingProvider:
-    name = "exploding"
+    name = "mock"  # test double: exempt from the real-provider model allow-list
 
     async def chat(self, request: ProviderRequest) -> ProviderResponse:
         raise RuntimeError("upstream said: " + request.messages[0].content)

@@ -94,10 +94,31 @@ sensitive, because it is stored with held requests and in audit events.
 
 A successful response is a normal `chat.completion` object plus an extra
 `guardrail` field (`request_id`, `action`, `risk_score`, `placeholders`,
-`reasons`, `output_inspected`). `output_inspected` is `false` until Phase 4.
+`reasons`, `output_inspected`, `output`). `guardrail.output` describes what the
+gateway did to the **model's answer** (see section 5).
 If the post-delivery audit write fails, the answer is still returned with
 `audit_incomplete: true` (the pre-forward audit event exists).
-`stream=true` is rejected with 400 until streaming inspection exists.
+### Streaming (`"stream": true`)
+
+The response is a standard OpenAI server-sent-event stream
+(`chat.completion.chunk` objects, terminated by `data: [DONE]`), so streaming
+clients and the OpenAI SDK work unchanged. Differences a client may notice:
+
+* Text arrives in slightly larger, slightly delayed pieces: the gateway holds
+  back the newest ~128 characters and any token or detection that may still be
+  growing, so no part of a secret is released before it can be checked.
+* The last chunk before `[DONE]` carries the `guardrail` summary.
+* Input decisions (BLOCK, approval) and provider errors that happen before the
+  first token are normal JSON errors with HTTP status codes. Problems after the
+  stream has started (provider failure, output blocked) arrive as a final
+  `{"error": {...}}` event, because the status line has already been sent;
+  text released before that point was already checked and is safe.
+
+### Model allow-list
+
+With a real provider, only the models in `GUARDRAIL_PROVIDER_MODELS` may be
+requested (`400 model_not_allowed` otherwise) — cost control, and the model name
+stays a known value. The mock provider accepts any `mock-*` name.
 
 **OpenAI SDK:** works unmodified — set `base_url` to `http://127.0.0.1:8000/v1` and
 use a gateway token or API key as the API key. Blocks surface as
@@ -120,6 +141,29 @@ use a gateway token or API key as the API key. Blocks surface as
 Held messages are encrypted with AES-256-GCM (key derived via HKDF, bound to the
 request id) and erased on execution, denial or expiry.
 
+## 5b. Output security (the model's answer)
+
+Every answer — complete or streamed, including executed approvals — is
+inspected with the same detection engine before the client sees it, then
+handled by the `output` section of the policy file:
+
+| Default | Effect |
+|---|---|
+| SECRET / FINANCIAL / PII in the answer | **REDACT** → typed placeholder (numbering never collides with the prompt's) |
+| PRIVATE_KEY in the answer | **BLOCK** → `502 output_blocked` (or an error event mid-stream) |
+| CONFIDENTIAL markers, internal IPs | allowed (common in explanations) |
+| Insecure generated code | **annotate**: `guardrail.output.code_findings` lists rule, CWE, severity, block and line |
+
+`code.mode: block` withholds answers whose code has findings at or above
+`block_at` (streams hold each fenced block until it closes, then check it).
+
+Code checks are line-based patterns over fenced blocks — eval/exec, `shell=True`,
+`os.system`, unsafe pickle/YAML, SQL built from strings, JS eval/`innerHTML`,
+`curl | sh`, `chmod 777`, disabled TLS verification, MD5/SHA-1 for secrets,
+non-cryptographic random tokens, Flask debug, wildcard CORS with credentials,
+hard-coded credentials (19 rules). They are a linter-style warning, not a proof
+that code is safe.
+
 ## 6. Errors
 
 Every error has the same shape and never echoes request content:
@@ -130,7 +174,7 @@ Every error has the same shape and never echoes request content:
 
 | Status | `type` examples |
 |---|---|
-| 400 | `streaming_not_supported`, `invalid_request`, `invalid_model` |
+| 400 | `invalid_request`, `invalid_model`, `model_not_allowed`, `provider_bad_request` |
 | 401 | `unauthorized`, `invalid_credentials` |
 | 403 | `forbidden`, `policy_blocked`, `approval_required` |
 | 404 / 409 | `not_found`, `approval_not_executable`, `approval_not_pending` |
@@ -138,10 +182,31 @@ Every error has the same shape and never echoes request content:
 | 422 | `validation_error` (field locations and messages only — no input values; unknown field names shown as `<unknown field>`) |
 | 500 | `internal_error` (contained in the middleware: security headers kept, message never logged) |
 | 429 | `rate_limited` (with `Retry-After`) |
-| 502 / 503 / 504 | `provider_unavailable`, `provider_rate_limited`, `audit_unavailable`, `provider_timeout` |
+| 502 | `provider_unavailable`, `provider_bad_response`, `output_blocked` |
+| 503 | `provider_rate_limited`, `provider_quota_exhausted`, `audit_unavailable` |
+| 504 | `provider_timeout` |
 
 ## 7. Mock provider models
 
 `mock-echo` (quotes what it received — shows the redaction), `mock-error`,
-`mock-timeout`, `mock-ratelimit`, and `mock-leak` (returns a synthetic key, for
-Phase 4 output tests).
+`mock-timeout`, `mock-ratelimit`, `mock-leak` (answers with a synthetic AWS key —
+shows output redaction) and `mock-code` (answers with insecure Python — shows
+the code findings). Streaming works with all of them (7-character chunks, so a
+leaked key is split across chunks).
+
+## 8. Using a real provider
+
+Put the provider settings in `backend/.env` (git-ignored; see
+`backend/.env.example`), e.g. `GUARDRAIL_PROVIDER=openai` and
+`GUARDRAIL_PROVIDER_API_KEY=...`, then restart the gateway. The key is only ever
+sent in the `Authorization` header to the configured base URL; it never appears
+in logs, errors, audit events or responses, and provider error bodies are never
+passed through. Transient failures (429, 5xx, timeouts) are retried twice with
+backoff; an exhausted account (`insufficient_quota`) fails immediately with
+`503 provider_quota_exhausted`.
+
+Live tests against the configured provider are opt-in (they cost money):
+
+```powershell
+$env:GUARDRAIL_LIVE_TESTS = "1"; .venv\Scripts\python -m pytest -m live -q
+```
