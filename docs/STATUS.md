@@ -197,6 +197,24 @@ Live provider notes (2026-10-15): the configured OpenAI account returned
 originally suggested model names were retired for new users, so the allowed
 models were taken from the key's own model list.
 
+## System health check (2026-10-15)
+
+A full check of the running system before Phase 5 found and fixed:
+
+| Problem | Cause | Fix / evidence |
+|---|---|---|
+| **GitHub CI failed on every push** (all 4 jobs: Windows/Ubuntu × Python 3.12/3.13) | Current `setuptools` refuses a package README outside the package directory (`readme = "../README.md"`); the local venv predated that rule | `backend/README.md`; reproduced and verified with a fresh clone + fresh venv: install, lint, format, mypy and 645 tests pass |
+| Fingerprint key changed on every development restart (start-up warning) | Development used an ephemeral key, so the same secret got a different fingerprint after a restart | Persisted in the per-user keys folder like every other dev key; `test_development_fingerprint_key_is_persisted` |
+| `GET /favicon.ico` 404 and `HEAD /` 405 in server logs | Browser/preview probes | Quiet 204 / redirect; `test_favicon_and_head_root_are_quiet` |
+| Local tool config could be committed by `git add -A` | `.claude/` not ignored | Added to `.gitignore` |
+
+Verified healthy: the real development database is at migration head with no
+schema drift (`alembic check`) and its audit chain verifies; the server starts
+with no warnings; an 11-step live walkthrough against Google Gemini passed
+(ALLOW, input REDACT, real answer redacted, insecure-code warning, streaming,
+BLOCK, approval hold → approve → execute, model allow-list, audit verify, no
+secrets in the audit log); the server log contained no errors and no prompt text.
+
 ## Detection quality (5 seeds; see `docs/EVALUATION.md`)
 
 | Set | Samples | Entity recall | Finding precision | F1 | Benign-prompt FP rate | Leaked values |

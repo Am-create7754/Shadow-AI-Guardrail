@@ -12,7 +12,13 @@ from app.api.errors import ApiError
 router = APIRouter(tags=["health"])
 
 
-@router.get("/", include_in_schema=False)
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    """Browsers ask for this automatically; answer quietly instead of logging a 404."""
+    return Response(status_code=204)
+
+
+@router.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root(request: Request) -> Response:
     """Send browsers to the interactive docs (when enabled, i.e. outside production)."""
     if request.app.docs_url:

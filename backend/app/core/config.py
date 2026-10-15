@@ -42,6 +42,24 @@ MIN_KEY_BYTES = 32
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
+def _dev_key(path: Path) -> str:
+    """Read a development key, generating it once (owner-only file) if missing."""
+    if not path.exists():
+        warnings.warn(f"generating development key at {path}", stacklevel=3)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:  # created concurrently by another process
+            pass
+        else:
+            with os.fdopen(fd, "w", encoding="ascii") as fh:
+                fh.write(secrets.token_hex(32))
+    key = path.read_text(encoding="ascii").strip()
+    if len(key.encode()) < MIN_KEY_BYTES:
+        raise ValueError(f"{path} is shorter than {MIN_KEY_BYTES} bytes")
+    return key
+
+
 class Environment(StrEnum):
     DEVELOPMENT = "development"
     TEST = "test"
@@ -139,13 +157,12 @@ class Settings(BaseSettings):
         if self.fingerprint_key is None:
             if self.environment is Environment.PRODUCTION:
                 raise ValueError("GUARDRAIL_FINGERPRINT_KEY must be set in production")
-            # Ephemeral key: fingerprints stay consistent within this process only.
             if self.environment is Environment.DEVELOPMENT:
-                warnings.warn(
-                    "GUARDRAIL_FINGERPRINT_KEY not set; using an ephemeral per-process key",
-                    stacklevel=2,
-                )
-            self.fingerprint_key = SecretStr(secrets.token_urlsafe(48))
+                # Persisted like the other development keys, so fingerprints in the
+                # audit log stay comparable across restarts.
+                self.fingerprint_key = SecretStr(_dev_key(self.keys_dir / "fingerprint_key.key"))
+            else:  # test: throw-away key
+                self.fingerprint_key = SecretStr(secrets.token_urlsafe(48))
         if len(self.fingerprint_key.get_secret_value().encode()) < MIN_KEY_BYTES:
             raise ValueError(f"GUARDRAIL_FINGERPRINT_KEY must be at least {MIN_KEY_BYTES} bytes")
         if self.environment is Environment.PRODUCTION:

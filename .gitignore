@@ -38,3 +38,6 @@ extension/dist/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# --- Local tool configuration ---
+.claude/

@@ -366,3 +366,8 @@ def test_root_redirects_to_docs_outside_production(gw: Gateway) -> None:
     r = gw.client.get("/", follow_redirects=False)
     assert r.status_code == 307
     assert r.headers["location"] == "/docs"
+
+
+def test_favicon_and_head_root_are_quiet(gw: Gateway) -> None:
+    assert gw.client.get("/favicon.ico").status_code == 204
+    assert gw.client.head("/", follow_redirects=False).status_code == 307

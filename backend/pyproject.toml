@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "guardrail"
 version = "0.1.0"
 description = "Autonomous AppSec Guardrail for Shadow AI Deployments - security gateway for AI prompts"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9,<3",

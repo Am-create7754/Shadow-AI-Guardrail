@@ -237,3 +237,11 @@ def test_empty_env_values_mean_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings()
     assert s.audit_key is None
     assert s.fingerprint_key is not None  # ephemeral test key
+
+
+def test_development_fingerprint_key_is_persisted(tmp_path: Path) -> None:
+    with pytest.warns(UserWarning, match="generating development key"):
+        first = Settings(environment=Environment.DEVELOPMENT, keys_dir=tmp_path)
+    second = Settings(environment=Environment.DEVELOPMENT, keys_dir=tmp_path)
+    assert first.fingerprint_key_bytes() == second.fingerprint_key_bytes()
+    assert (tmp_path / "fingerprint_key.key").exists()
