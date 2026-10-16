@@ -80,6 +80,7 @@ def create_app(settings: Settings | None = None, *, provider: Provider | None = 
         try:
             yield
         finally:
+            await gateway.drain_background_tasks()  # closing stream audit records
             await active_provider.aclose()
             await engine.dispose()
 

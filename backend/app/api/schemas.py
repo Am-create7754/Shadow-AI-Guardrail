@@ -18,6 +18,11 @@ class _Strict(BaseModel):
 
 class InspectRequest(_Strict):
     text: str = Field(max_length=MAX_MESSAGE_CHARS)
+    # Where the text came from, e.g. "extension:chatgpt.com" (browser extension).
+    # Stored in the audit log, so it is restricted to a hostname-like shape.
+    source: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9-]{0,31}(:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?)?$"
+    )
 
 
 class ChatMessageIn(_Strict):

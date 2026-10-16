@@ -48,10 +48,15 @@ def compute_metrics(events: list[AuditRecord], hours: int) -> dict[str, Any]:
     risk_bands: Counter[str] = Counter()
     series: dict[str, Counter[str]] = {}
     active_users: set[str] = set()
+    sources: Counter[str] = Counter()
 
     for e in events:
         event_types[e.event_type] += 1
         data = e.data
+        if e.event_type == _INSPECTION_EVENT:
+            source = data.get("source")
+            sources[source if isinstance(source, str) else "api"] += 1
+            continue
         if e.event_type == "chat.forwarded" and "approval_id" in data:
             continue  # execution of an approval already counted as REQUIRE_APPROVAL
         if e.event_type in _DECISION_EVENTS:
@@ -113,5 +118,7 @@ def compute_metrics(events: list[AuditRecord], hours: int) -> dict[str, Any]:
         "provider_errors": event_types.get("chat.provider_error", 0),
         "output_blocked": event_types.get("chat.output_blocked", 0),
         "inspections": event_types.get(_INSPECTION_EVENT, 0),
+        # Where inspect-only checks came from: "api" or "extension:<site>".
+        "inspection_sources": sources.most_common(10),
         "failed_logins": event_types.get("auth.login_failed", 0),
     }

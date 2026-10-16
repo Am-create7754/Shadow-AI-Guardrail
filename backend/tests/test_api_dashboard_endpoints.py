@@ -107,3 +107,31 @@ def test_public_explanations_do_not_reveal_value_length(gw: Gateway) -> None:
     explanations = [f["explanation"] for f in r.json()["findings"]]
     assert explanations, "expected an entropy finding"
     assert not [e for e in explanations if "length" in e]
+
+
+def test_inspect_source_is_audited_and_counted(gw: Gateway) -> None:
+    body = {"text": "db_password=x9y8z7w6v5", "source": "extension:chatgpt.com"}
+    r = gw.client.post("/v1/inspect", headers=gw.h("dev1"), json=body)
+    assert r.status_code == 200
+    gw.client.post("/v1/inspect", headers=gw.h("dev1"), json={"text": "hello"})
+    m = gw.client.get("/v1/admin/metrics?hours=24", headers=gw.h("admin")).json()
+    assert dict(m["inspection_sources"]) == {"extension:chatgpt.com": 1, "api": 1}
+    events = gw.client.get("/v1/admin/audit/events?event_type=prompt.inspected",
+                           headers=gw.h("admin")).json()  # fmt: skip
+    assert {e["data"].get("source") for e in events} == {"extension:chatgpt.com", None}
+
+
+def test_inspect_source_is_validated(gw: Gateway) -> None:
+    for bad in ("Extension:X", "extension:a b", "x" * 40, "extension:" + "a" * 300, "<script>"):
+        r = gw.client.post("/v1/inspect", headers=gw.h("dev1"), json={"text": "hi", "source": bad})
+        assert r.status_code == 422, bad
+        assert bad not in r.text
+
+
+def test_sensitive_looking_source_is_refused(gw: Gateway) -> None:
+    """The label is stored in the audit log, so it gets the model-name treatment."""
+    for label in ("extension:192.168.1.20", "extension:4" + "1" * 15):
+        body = {"text": "hi", "source": label}
+        r = gw.client.post("/v1/inspect", headers=gw.h("dev1"), json=body)
+        assert r.status_code == 400, label
+        assert label.split(":")[1] not in r.text

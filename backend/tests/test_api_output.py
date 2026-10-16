@@ -187,3 +187,27 @@ def test_stream_audit_trail(gw: Gateway) -> None:
     assert done[0].data["stream"] is True
     assert done[0].data["output_entities"] == {"AWS_ACCESS_KEY": 1}
     assert LEAK not in json.dumps(done[0].model_dump())
+
+
+def test_stream_ends_only_after_its_closing_audit_record(gw: Gateway) -> None:
+    """Regression (CI): the closing record was written fire-and-forget, so on slow
+    machines a client could read the audit log before it existed. Simulate a slow
+    database for the closing events only."""
+    import asyncio
+
+    from app.api.deps import Services
+
+    original = Services.record
+
+    async def slow_record(self: Services, request: Any, event_type: str, *a: Any) -> None:
+        if event_type.startswith(("chat.completed", "chat.output_blocked", "chat.provider")):
+            await asyncio.sleep(0.5)
+        await original(self, request, event_type, *a)
+
+    Services.record = slow_record  # type: ignore[method-assign]
+    try:
+        stream(gw, "give me a key", model="mock-leak")
+        done = gw.call(gw.services.audit.list_events, event_type="chat.completed")
+    finally:
+        Services.record = original  # type: ignore[method-assign]
+    assert len(done) == 1

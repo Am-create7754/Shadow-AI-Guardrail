@@ -44,6 +44,14 @@ from app.providers.base import ChatMessage, ProviderError, ProviderRequest, Prov
 router = APIRouter(prefix="/v1", tags=["gateway"])
 # Strong references to fire-and-forget audit tasks (asyncio keeps only weak ones).
 _BACKGROUND_TASKS: set[asyncio.Task[bool]] = set()
+
+
+async def drain_background_tasks(timeout: float = 10.0) -> None:
+    """Let pending audit writes finish before shutdown (called by the lifespan)."""
+    if _BACKGROUND_TASKS:
+        await asyncio.wait(set(_BACKGROUND_TASKS), timeout=timeout)
+
+
 logger = logging.getLogger("guardrail.api")
 
 
@@ -273,13 +281,13 @@ async def _stream(
 
     audited = False
 
-    def schedule_audit(event: str, error: ProviderError | None = None) -> None:
+    def schedule_audit(event: str, error: ProviderError | None = None) -> asyncio.Task[bool] | None:
         """Write the closing audit event in its own task: if the client hangs up,
         Starlette cancels this generator, and a cancellation landing inside a
         database write would both lose the record and break the connection."""
         nonlocal audited
         if audited:
-            return
+            return None
         audited = True
         data = {
             "model": provider_request.model,
@@ -292,6 +300,15 @@ async def _stream(
         task = asyncio.create_task(_audit_best_effort(services, request, event, user, data))
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(_BACKGROUND_TASKS.discard)
+        return task
+
+    async def settle(task: asyncio.Task[bool] | None) -> None:
+        """Wait for the closing audit record before the final events, so the
+        stream never ends before its record exists (the earlier fire-and-forget
+        version let clients finish first - visible as flaky CI). Shielded: a
+        disconnect cancels only this wait, never the write."""
+        if task is not None:
+            await asyncio.shield(task)
 
     async def body() -> AsyncIterator[bytes]:
         error: ProviderError | None = None
@@ -319,18 +336,18 @@ async def _stream(
 
             result = guard.result
             if guard.blocked:
-                schedule_audit("chat.output_blocked")
+                await settle(schedule_audit("chat.output_blocked"))
                 yield _sse({"error": {
                     "type": "output_blocked", "request_id": rid,
                     "message": "the rest of the answer was withheld by the output policy",
                     **result.to_public(),
                 }})  # fmt: skip
             elif error is not None:
-                schedule_audit("chat.provider_error", error)
+                await settle(schedule_audit("chat.provider_error", error))
                 yield _sse({"error": {"type": f"provider_{error.kind}", "message": error.detail,
                                       "request_id": rid}})  # fmt: skip
             else:
-                schedule_audit("chat.completed")
+                await settle(schedule_audit("chat.completed"))
                 yield _sse({
                     **base,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
@@ -382,8 +399,14 @@ async def inspect(
     body: InspectRequest, request: Request, user: CurrentUser, services: ServicesDep
 ) -> dict[str, Any]:
     """Scan text without contacting any AI provider."""
+    if body.source is not None and services.guard.inspect(body.source).action is not Action.ALLOW:
+        # Client-chosen and stored: refuse a label that looks sensitive (never echo it).
+        raise ApiError(400, "invalid_source", "source contains sensitive-looking content")
     insp = services.guard.inspect_conversation([body.text])
-    await _audit_or_fail(services, request, "prompt.inspected", user, _summary(insp))
+    summary = _summary(insp)
+    if body.source is not None:
+        summary["source"] = body.source
+    await _audit_or_fail(services, request, "prompt.inspected", user, summary)
     public = insp.messages[0].to_public()
     public["action"] = insp.action.value  # conversation-level decision
     public["sanitized_text"] = insp.sanitized_texts[0] if insp.action is not Action.BLOCK else None
