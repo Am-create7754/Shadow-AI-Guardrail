@@ -23,10 +23,10 @@ jobs:
     env:
       GUARDRAIL_ENVIRONMENT: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -39,3 +39,8 @@ jobs:
       - name: Report failing tests as annotations
         if: failure()
         run: python ../.github/scripts/junit_annotations.py junit.xml
+      - name: Dependency audit (known vulnerabilities)
+        run: python -m pip_audit --strict --progress-spinner off
+      - name: API fuzzing (no request may cause a server error)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        run: python -m loadtest.fuzz --max-examples 50

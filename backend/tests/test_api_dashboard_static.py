@@ -44,6 +44,8 @@ def test_index_and_spa_routes_get_the_shell_with_strict_csp(app_gw: Gateway) -> 
         csp = r.headers["content-security-policy"]
         assert "script-src 'self'" in csp
         assert "frame-ancestors 'none'" in csp
+        assert "require-trusted-types-for 'script'" in csp
+        assert "trusted-types 'none'" in csp
         assert "unsafe-inline" not in csp
         assert "unsafe-eval" not in csp
         assert r.headers["cache-control"] == "no-store"

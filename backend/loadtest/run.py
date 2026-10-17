@@ -207,6 +207,7 @@ def main() -> int:
         if not line.startswith("KEY "):
             raise SystemExit(f"server failed to start: {line!r}")
         key = line[4:]
+        proc.stdout.readline()  # ADMIN_KEY: not needed for load
         base = f"http://127.0.0.1:{args.port}"
         for _ in range(100):
             try:

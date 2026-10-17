@@ -30,7 +30,11 @@ router = APIRouter(include_in_schema=False)
 DASHBOARD_CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; "
-    "form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+    "form-action 'self'; frame-ancestors 'none'; object-src 'none'; "
+    # Trusted Types: DOM XSS sinks (innerHTML, script src...) refuse plain
+    # strings, and no policy may be created to bypass that. The dashboard
+    # renders text only, so it needs none.
+    "require-trusted-types-for 'script'; trusted-types 'none'"
 )
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 # Explicit types: on Windows, mimetypes reads the registry and may say text/plain

@@ -2,7 +2,8 @@
 
 Fresh database, anchor and keys in ``--dir``, mock provider, the developer's
 ``backend/.env`` ignored (it may hold a real provider key: load tests must never
-call a paid API). Prints ``KEY <api key>`` for a throwaway user, then serves.
+call a paid API). Prints ``KEY <api key>`` and ``ADMIN_KEY <api key>`` for
+throwaway users, then serves.
 
     .venv\\Scripts\\python -m loadtest.server --dir %TEMP%\\gr-load --port 8765
 """
@@ -51,7 +52,7 @@ def settings_for(base: Path) -> Settings:
     )
 
 
-async def _bootstrap(settings: Settings) -> str:
+async def _bootstrap(settings: Settings) -> tuple[str, str]:
     await asyncio.to_thread(migrate, settings.database_url)
     engine = create_engine(settings.database_url)
     try:
@@ -61,8 +62,13 @@ async def _bootstrap(settings: Settings) -> str:
             pepper=resolve_key(settings, settings.api_key_pepper, "api_key_pepper"),
             token_ttl_minutes=settings.jwt_ttl_minutes,
         )
-        user = await auth.create_user("loadtest", "load-test-password-not-secret", Role.DEVELOPER)
-        return (await auth.create_api_key(user.id, "loadtest")).key
+        pw = secrets.token_urlsafe(18)  # never used to log in: keys only
+        dev = await auth.create_user("loadtest", pw, Role.DEVELOPER)
+        admin = await auth.create_user("loadadmin", pw, Role.ADMIN)
+        return (
+            (await auth.create_api_key(dev.id, "loadtest")).key,
+            (await auth.create_api_key(admin.id, "loadtest")).key,
+        )
     finally:
         await engine.dispose()
 
@@ -74,8 +80,9 @@ def main() -> None:
     args = parser.parse_args()
     args.dir.mkdir(parents=True, exist_ok=True)
     settings = settings_for(args.dir)  # one instance: same keys for both
-    key = asyncio.run(_bootstrap(settings))
+    key, admin_key = asyncio.run(_bootstrap(settings))
     print(f"KEY {key}", flush=True)
+    print(f"ADMIN_KEY {admin_key}", flush=True)
     app = create_app(settings)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False)
 
