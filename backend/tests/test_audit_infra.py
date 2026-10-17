@@ -220,7 +220,8 @@ async def test_migrated_database_works_end_to_end(tmp_path: Path) -> None:
     url = f"sqlite+aiosqlite:///{(tmp_path / 'e2e.db').as_posix()}"
     await asyncio.to_thread(command.upgrade, _alembic(url), "head")
     engine = create_engine(url)
-    log = AuditLog.from_settings(Settings(environment=Environment.TEST), engine)
+    settings = Settings(environment=Environment.TEST, audit_anchor_path=tmp_path / "anchor.json")
+    log = AuditLog.from_settings(settings, engine)
     try:
         for i in range(3):
             await log.append(make_event(i))

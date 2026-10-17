@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from app.audit.__main__ import main
+from app.audit.schemas import AuditEventIn
+from app.audit.service import AuditLog
 from app.core import config
 
 
@@ -17,6 +19,8 @@ def cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("GUARDRAIL_ENVIRONMENT", "development")
     monkeypatch.setenv("GUARDRAIL_DATABASE_URL", f"sqlite+aiosqlite:///{db.as_posix()}")
     monkeypatch.setenv("GUARDRAIL_KEYS_DIR", str(tmp_path / "keys"))
+    # Own anchor: checkpoints written here must not leak into other tests.
+    monkeypatch.setenv("GUARDRAIL_AUDIT_ANCHOR_PATH", str(tmp_path / "anchor.json"))
     monkeypatch.setenv("GUARDRAIL_FINGERPRINT_KEY", "f" * 40)
     config.get_settings.cache_clear()
     yield tmp_path
@@ -56,3 +60,63 @@ def test_verify_without_keys_fails_cleanly(
     assert main(["verify"]) == 2
     assert "audit key not found" in capsys.readouterr().err
     assert not (cli_env / "keys" / "audit_hmac.key").exists()
+
+
+@pytest.mark.filterwarnings("ignore:generating development")
+def test_backup_is_consistent_verified_and_checksummed(
+    cli_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import asyncio
+    import hashlib
+
+    from app.audit.__main__ import _with_log
+
+    assert main(["init-db"]) == 0
+
+    async def add(log: AuditLog) -> None:
+        for i in range(12):
+            await log.append(AuditEventIn(event_type="test.backup", actor="u1", data={"i": i}))
+        await log.create_checkpoint()
+
+    asyncio.run(_with_log(config.get_settings(), add))
+    capsys.readouterr()
+    out = cli_env / "backups" / "audit.db"
+    assert main(["backup", "--out", str(out)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["chain_ok"] is True
+    assert report["events"] == 12
+    assert report["checkpoints"] == 1
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    assert report["sha256"] == digest
+    assert (cli_env / "backups" / "audit.db.sha256").read_text(
+        encoding="ascii"
+    ) == f"{digest}  audit.db\n"
+    # Never overwrites an existing backup.
+    assert main(["backup", "--out", str(out)]) == 2
+
+
+@pytest.mark.filterwarnings("ignore:generating development")
+def test_backup_of_tampered_database_is_reported(
+    cli_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import asyncio
+    import sqlite3
+
+    from app.audit.__main__ import _with_log
+
+    assert main(["init-db"]) == 0
+
+    async def add(log: AuditLog) -> None:
+        for i in range(3):
+            await log.append(AuditEventIn(event_type="test.backup", actor="u1", data={"i": i}))
+
+    asyncio.run(_with_log(config.get_settings(), add))
+    db = cli_env / "cli.db"
+    con = sqlite3.connect(db)
+    con.execute("DROP TRIGGER trg_audit_events_no_update")  # an attacker with DB access
+    con.execute("UPDATE audit_events SET actor = 'someone-else' WHERE seq = 2")
+    con.commit()
+    con.close()
+    capsys.readouterr()
+    assert main(["backup", "--out", str(cli_env / "b.db")]) == 1
+    assert json.loads(capsys.readouterr().out)["chain_ok"] is False

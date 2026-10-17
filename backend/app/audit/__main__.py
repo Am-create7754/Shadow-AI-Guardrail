@@ -9,6 +9,7 @@ PowerShell examples (from backend/)::
     .venv\\Scripts\\python -m app.audit export-checkpoints exported.json
     .venv\\Scripts\\python -m app.audit export-public-key checkpoint_public.pem
     .venv\\Scripts\\python -m app.audit tamper-demo
+    .venv\\Scripts\\python -m app.audit backup --out D:\\backups\\audit-2026-10-18.db
 
 ``verify`` exits with status 1 when any integrity problem is found.
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import sqlite3
 import sys
@@ -123,6 +125,57 @@ async def _tamper_demo() -> int:
             await engine.dispose()
 
 
+def _sqlite_path(database_url: str) -> Path:
+    if not database_url.startswith("sqlite") or ":///" not in database_url:
+        raise ValueError("backup supports SQLite only; use pg_dump for PostgreSQL")
+    path = database_url.split(":///", 1)[1]
+    if not path or path == ":memory:":
+        raise ValueError("in-memory database cannot be backed up")
+    return Path(path)
+
+
+def _backup(settings: Settings, out: Path) -> int:
+    """Consistent online copy (SQLite backup API: safe while the gateway writes),
+    then verify the copy's chain and write a SHA-256 checksum next to it."""
+    src_path = _sqlite_path(settings.database_url)
+    if out.exists():
+        print(f"refusing to overwrite {out}", file=sys.stderr)
+        return 2
+    out.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(f"file:{src_path.as_posix()}?mode=ro", uri=True)
+    dst = sqlite3.connect(out)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+
+    async def verify_copy() -> Any:
+        engine = create_engine("sqlite+aiosqlite:///" + out.as_posix())
+        try:
+            # No anchor: it may already be newer than this copy (that would be
+            # reported as a rollback, which is expected for a backup).
+            copy_settings = settings.model_copy(update={"audit_anchor_path": None})
+            log = AuditLog.for_verification(copy_settings, engine, _existing_signer_pems(settings))
+            return await log.verify()
+        finally:
+            await engine.dispose()
+
+    report = asyncio.run(verify_copy())
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    out.with_name(out.name + ".sha256").write_text(f"{digest}  {out.name}\n", encoding="ascii")
+    _print(
+        {
+            "backup": str(out),
+            "sha256": digest,
+            "events": report.events_checked,
+            "checkpoints": report.checkpoints_checked,
+            "chain_ok": report.ok,
+        }
+    )
+    return 0 if report.ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -145,12 +198,20 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("export-public-key", help="write the checkpoint public key (PEM)")
     k.add_argument("path", type=Path)
     sub.add_parser("tamper-demo", help="demonstrate tamper detection on a temporary database")
+    b = sub.add_parser("backup", help="verified online copy of the SQLite database")
+    b.add_argument("--out", type=Path, required=True, help="new file (never overwritten)")
     args = parser.parse_args(argv)
 
     if args.cmd == "tamper-demo":
         return asyncio.run(_tamper_demo())
 
     settings = get_settings()
+    if args.cmd == "backup":
+        try:
+            return _backup(settings, args.out)
+        except (ValueError, FileNotFoundError, sqlite3.Error) as exc:
+            print(f"backup failed: {exc}", file=sys.stderr)
+            return 2
     if args.cmd == "init-db":
         _alembic_upgrade(settings.database_url)
         print(f"database ready: {settings.database_url}")
