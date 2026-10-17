@@ -18,7 +18,8 @@ model output and writes a tamper-evident audit trail.
 > endpoint), output security (real OpenAI-compatible provider, answer
 > redaction, insecure-code checks, leak-safe streaming) and the web dashboard
 > (developer playground, approvals, API keys; admin overview, approval queue,
-> audit log with verification, users, policy). The browser extension is planned.
+> audit log with verification, users, policy) and a Chrome MV3 extension that
+> checks prompts typed into ChatGPT, Claude, Gemini and Copilot before they are sent.
 > See [docs/STATUS.md](docs/STATUS.md) for exactly what works and how it was verified.
 
 ## Repository layout
@@ -46,6 +47,7 @@ frontend/                   React 19 + TypeScript + Vite dashboard (served by th
   src/api/                  typed API client (token in memory only, SSE parser)
   src/pages/                playground, approvals, API keys; admin/* pages
   src/components/           UI primitives, guardrail visualisations (text-only rendering)
+extension/                  Chrome MV3 extension (see extension/README.md)
 docs/                       architecture, status, API, evaluation report, audit design
 ```
 

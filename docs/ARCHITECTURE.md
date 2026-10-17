@@ -190,9 +190,34 @@ origin and no CORS is needed in production.
   ids, decisions, risk, models) - the same metadata-only data the audit log
   already holds.
 
-### 3.9 Browser extension [planned - Phase 6]
+### 3.9 Browser extension - `extension/` [built]
 
-A Chrome MV3 extension that talks only to the configured gateway.
+Chrome Manifest V3, TypeScript, bundled with esbuild (no runtime dependencies,
+no remote code). It closes part of the "Shadow AI" gap: employees typing into
+AI websites directly instead of going through the gateway.
+
+```
+AI site page ──(Enter / send click / form submit, capture phase)──► content script
+content script ──{type:"inspect", text}──► service worker (holds the API key)
+service worker ──POST /v1/inspect {text, source:"extension:<site>"}──► gateway
+gateway ──decision (audited as prompt.inspected with its source)──► worker ──► content script
+ALLOW → replay the original send (only if the editor still holds that exact text)
+REDACT → panel; "replace" writes the placeholder text into the editor
+REQUIRE_APPROVAL / BLOCK / unavailable → not sent (fail closed by default)
+```
+
+- The API key and gateway address live only in the service worker's storage
+  (`chrome.storage.session` by default); content scripts never receive them.
+- The worker answers prompt checks only from its own content scripts on the
+  listed https sites (site derived from the sender URL) and status requests only
+  from its own pages.
+- Permissions: `storage`; hosts `127.0.0.1`/`localhost`; a remote HTTPS gateway
+  origin is requested at runtime. Content scripts only on the listed sites.
+- The warning panel is a closed shadow root built with `textContent` only.
+- Administrators can pin `gatewayUrl`, `failMode` and `enabled` with Chrome
+  enterprise policy. The dashboard overview lists checks per AI site.
+- Limits: a guardrail against accidents, not a control a determined user cannot
+  bypass (see `extension/README.md`).
 
 ## 4. Key decisions
 

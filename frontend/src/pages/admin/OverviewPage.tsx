@@ -105,6 +105,13 @@ export function OverviewPage() {
               </dl>
             </Card>
           </div>
+
+          <Card title="AI sites checked by the browser extension">
+            <RankList
+              items={m.inspection_sources.filter(([s]) => s.startsWith('extension:')).map(([s, n]) => [s.slice('extension:'.length), n] as [string, number])}
+              empty="No prompts checked by the extension in this window."
+            />
+          </Card>
         </div>
       )}
     </div>

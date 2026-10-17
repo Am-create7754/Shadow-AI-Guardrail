@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "gatewayUrl": {
+      "title": "Guardrail gateway address",
+      "description": "Origin of the gateway, e.g. https://guardrail.example.com",
+      "type": "string"
+    },
+    "failMode": {
+      "title": "Behaviour when the gateway is unavailable",
+      "description": "block (default) or allow",
+      "type": "string",
+      "enum": ["block", "allow"]
+    },
+    "enabled": {
+      "title": "Check prompts on AI sites",
+      "description": "Set to true to stop users from switching the check off",
+      "type": "boolean"
+    }
+  }
+}

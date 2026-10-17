@@ -58,7 +58,7 @@ $h = @{ Authorization = "Bearer $($login.access_token)" }
 | POST | `/v1/auth/logout` | any | Revoke all of the caller's session tokens (API keys unaffected) |
 | GET | `/v1/me` | any | Current user |
 | GET / POST / DELETE | `/v1/me/api-keys[/{id}]` | any | List / create / revoke own API keys |
-| POST | `/v1/inspect` | any | Inspect text only; never contacts a provider |
+| POST | `/v1/inspect` | any | Inspect text only; never contacts a provider. Optional `source` label (e.g. `extension:chatgpt.com`, lowercase hostname shape) is audited and counted per site; a label that looks sensitive is refused with 400 |
 | POST | `/v1/chat/completions` | any | OpenAI-compatible chat (non-streaming) |
 | GET | `/v1/approvals` | any | Own approval requests |
 | POST | `/v1/approvals/{id}/execute` | requester | Send an approved request (once) |

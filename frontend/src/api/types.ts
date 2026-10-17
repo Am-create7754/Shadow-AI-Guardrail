@@ -192,6 +192,8 @@ export interface Metrics {
   output_blocked: number
   failed_logins: number
   inspections: number
+  /** Where inspect-only checks came from: "api" or "extension:<site>". */
+  inspection_sources: [string, number][]
   /** More events than the server aggregates: only the newest ones were used. */
   truncated: boolean
 }

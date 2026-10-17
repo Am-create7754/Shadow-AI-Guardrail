@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shadow AI Guardrail - Settings</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="options">
+    <main>
+      <h1>Shadow AI Guardrail</h1>
+      <p class="muted">Prompts typed into supported AI sites are sent to your organisation's guardrail gateway and checked before the site receives them.</p>
+
+      <form id="form" novalidate>
+        <label for="gateway">Gateway address</label>
+        <input id="gateway" type="url" autocomplete="off" spellcheck="false" required />
+        <p class="muted small">HTTPS required, except http://127.0.0.1 or http://localhost for local testing.</p>
+
+        <label for="key">API key</label>
+        <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="grk_…" />
+        <p class="muted small" id="key-state">No key saved. Create one in the dashboard under "API keys".</p>
+        <p class="muted small">The key is kept in memory only and must be entered again after the browser restarts, so it is never stored on disk where an AI site's page could reach it.</p>
+
+        <fieldset>
+          <legend>If the gateway cannot be reached</legend>
+          <label class="row"><input type="radio" name="failmode" value="block" /> Block the prompt (recommended)</label>
+          <label class="row"><input type="radio" name="failmode" value="allow" /> Let the user send it unchecked</label>
+        </fieldset>
+
+        <p id="locked" class="muted" hidden>Some settings are managed by your organisation and cannot be changed here.</p>
+        <div class="buttons">
+          <button type="submit" class="primary">Save and test</button>
+          <button type="button" id="forget">Forget key</button>
+        </div>
+        <p id="result" role="status"></p>
+      </form>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

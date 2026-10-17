@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-10-15 · Current phase: **Phase 5 complete → Phase 6 next**_
+_Last updated: 2026-10-18 · Current phase: **Phase 6 complete → Phase 7 next**_
 
 Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ not started
 
@@ -14,7 +14,7 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | 3 | FastAPI gateway, auth, rate limits, mock provider | ✅ |
 | 4 | Real provider adapter, output inspection, streaming | ✅ |
 | 5 | Developer portal + admin dashboard (React) | ✅ |
-| 6 | Chrome MV3 extension | ⬜ |
+| 6 | Chrome MV3 extension | ✅ |
 | 7 | Hardening, load and security testing | ⬜ |
 | 8 | Academic deliverables (SRS, diagrams, STRIDE, report) | ⬜ |
 
@@ -72,17 +72,25 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | Gateway serves the build at `/app`: strict CSP (no inline script/eval), explicit MIME types, allow-listed extensions, traversal-proof, SPA fallback, immutable asset caching; `/` redirects to the dashboard when built | `tests/test_api_dashboard_static.py` (incl. 5 encoded traversal attempts) |
 | Metrics and policy endpoints admin-only, metadata only (no prompt text), window validated | `tests/test_api_dashboard_endpoints.py` |
 | Chat responses describe the caller's own request: public findings (no values/offsets) and the exact sanitized messages sent | `test_chat_response_explains_what_was_forwarded`, `test_blocked_response_has_findings_but_no_sanitized_text` |
+| **Phase 6** — Chrome MV3 extension (`extension/`): checks prompts on ChatGPT, Claude, Gemini, Copilot before sending (Enter, send button, form submit); ALLOW replays the send, REDACT offers placeholder replacement, BLOCK / REQUIRE_APPROVAL stop it | `extension/src/lib/guard.test.ts` (simulated chat pages, textarea and contenteditable); live Chromium run below |
+| API key only in the service worker (session storage by default); content scripts get verdicts only; sender checks on every message | `router.test.ts`, `config.test.ts` |
+| Fail closed: no key, gateway down, bad response, extension error; over-long prompts always stopped; fail-open only by policy and user choice | `guard.test.ts`, `gateway.test.ts`; live run (gateway stopped) |
+| Replay bound to the exact approved text (edits during the check are not sent); only real user input starts a check | `does not replay if the text changed...` (verified to fail when the check is removed) |
+| Least privilege manifest: `storage` only, loopback gateway hosts, runtime HTTPS origin request, listed sites only, no web-accessible resources, strict CSP | `manifest.test.ts` |
+| Gateway: `/v1/inspect` `source` label (validated, audited, sensitive-looking refused); dashboard "AI sites checked by the browser extension" | `test_inspect_source_*`, `test_sensitive_looking_source_is_refused`; live dashboard check |
 
 ## Latest test results
 
 Command: `backend\scripts\check.ps1` (Windows PowerShell)
 
 - ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 67 files
-- pytest: **685 passed, 5 skipped** (the 5 live-provider tests are opt-in and
+- pytest: **689 passed, 5 skipped** (the 5 live-provider tests are opt-in and
   passed separately against Gemini). Un-awaited coroutines fail the suite.
 - Frontend (`frontend\scripts\check.ps1`): oxlint (warnings are errors) pass,
   `tsc` strict pass, Vitest **28 passed**, production build pass, `npm audit`: 0
   vulnerabilities.
+- Extension (`extension\scripts\check.ps1`): oxlint pass, `tsc` strict pass,
+  Vitest **74 passed**, esbuild bundle pass, `npm audit`: 0 vulnerabilities.
 
 ## Independent security review (Phase 1)
 
@@ -254,6 +262,42 @@ only in memory, `credentials: 'omit'`, cache cleared on logout/401; no
 `dangerouslySetInnerHTML`/`innerHTML`/model-derived `href`; least-privilege CI
 with no untrusted expressions in `run:`.
 
+## Independent security review (Phase 6)
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 1 | **High** | A send-button click picked the *first* matching editor; ChatGPT's composer has a hidden empty `<textarea>` first, so clicks were let through **unchecked** (Enter was checked) | All editors in scope are considered (focused one, else every filled one, joined); ChatGPT selector narrowed to `#prompt-textarea` | `checks a send-button click even when an empty editor comes first`, `checks every filled editor...` (verified to fail on the old logic) |
+| 2 | Medium | Page scripts could dispatch synthetic sends, making the extension inspect page-chosen text with the user's key (oracle; fake audit entries in the user's name) | Only trusted events start a check. **Found in the live Chromium re-test:** Chrome marks the `submit` event of a script's `requestSubmit()` as trusted, so a submit counts as the user's only within 1 s of real input | `stops page-script (synthetic) sends...`, `does not treat a script-started form submission as the user` (verified to fail without the check); live Chromium: planted text + synthetic Enter/click/requestSubmit → no gateway call, not sent |
+| 3 | Medium | "Remember key" stored it in `storage.local`, which content scripts can read by default | Option removed; key only in `storage.session`; an old persisted key is deleted | `keeps the key in session storage only, and clears an old persisted key` |
+| 4 | Medium (functional) | The options page opens in a tab, so `status` was refused ("Save and test" broken) | Extension pages identified by scheme + host of the sender URL (`URL.origin` is the opaque `"null"` for `chrome-extension:` in some runtimes, which the new test exposed) | `are answered for the options page opened in a tab` |
+| 5 | Low | If the page removed the panel, the guard stayed busy and swallowed later sends | Panel resolves "dismiss" when its host disappears | `resolves "dismiss" if the page removes the panel` |
+| 6 | Low | Invalid configured gateway address silently fell back to localhost | Treated as not configured (fail closed) | `treats an explicitly set but invalid gateway as not configured` |
+| 7 | Low | Replay clicked the first send button, not the one clicked | Replays the user's button | `replays the button the user clicked` |
+| 8 | Info | `source` label is self-reported | Documented as an unauthenticated hint | - |
+| 9 | Info | Limits of any extension (hostile site page, shadow DOM, iframes, pointerdown sends) | Documented in `extension/README.md` | - |
+| 10 | Info | Actions pinned by tag | Phase 7 (SHA pinning) | - |
+
+## Phase 6 live run (2026-10-18, Chromium, real gateway)
+
+Loading an unpacked extension is not possible in the test browser, so the
+extension's real guard, panel and gateway client (same sources, bundled with
+esbuild) ran in a local page imitating ChatGPT (textarea + form, Enter) and
+Claude (contenteditable, send button), against the running gateway with a
+developer API key.
+
+| Step | Result |
+|---|---|
+| Password prompt + Enter (ChatGPT-like) | REDACT panel: "PASSWORD (high)" + placeholder preview; nothing sent |
+| Replace → Enter | `[PASSWORD_1]` in the editor; re-checked ALLOW; sent once with the placeholder |
+| Card number + send button (Claude-like) | BLOCK panel, no send option; not sent |
+| Password in contenteditable → Replace (keyboard) → Send | Rich editor replaced via the browser's editing path; focus restored; sent once redacted |
+| Gateway stopped | "Prompt not sent - guardrail unavailable"; text kept |
+| Audit log | `prompt.inspected` events tagged `extension:chatgpt.com` / `extension:claude.ai`; dashboard card shows the counts |
+| Console | no errors |
+
+Not verified on the live third-party sites (they require accounts); their
+selectors are best-effort and documented as needing maintenance.
+
 ## Phase 5 live walkthrough (2026-10-15, gateway serving the build, Gemini provider)
 
 Developer `ui_dev` and admins `ui_admin`/`ui_admin2` were created with random
@@ -281,15 +325,20 @@ app - block body plus an error boundary around each page; (3) the misleading
 
 ## CI status
 
-Commit `dfd5945` fixed the install step (all four jobs now pass install, lint,
-format and mypy), but **pytest fails on all four GitHub-hosted jobs** while it
-passes locally in every reproduction tried: the dev tree, a fresh clone with a
-fresh venv, an empty data directory, and `CI`/`GITHUB_ACTIONS`/
-`GUARDRAIL_ENVIRONMENT=test` set (647 passed). The public annotations do not
-include test output and job logs require authentication, so the workflow now
-writes failing test names and messages as annotations
-(`.github/scripts/junit_annotations.py`). The cause will be visible after the
-next push. A frontend workflow (lint, typecheck, tests, build, `npm audit`) was added.
+**All workflows green** since `951249d` (backend on Windows/Ubuntu x Python
+3.12/3.13, frontend; extension workflow added in Phase 6).
+
+Cause of the earlier red backend builds (found once failing tests were emitted
+as public annotations by `.github/scripts/junit_annotations.py`): the closing
+audit record of a **streamed** answer was written by a fire-and-forget task, so
+the stream could end before the record existed. GitHub's runners lost that race
+in 3 streaming tests on every job; local machines won it. This was a real (small)
+correctness defect, not only a flaky test: a client or administrator reading the
+audit log right after a stream could miss its record, and a shutdown could lose
+it. Fix: the stream awaits the write (shielded, so a disconnect still cannot
+cancel it) before its final events, and shutdown drains pending writes.
+`test_stream_ends_only_after_its_closing_audit_record` slows the database and
+fails on the old code.
 
 ## Detection quality (5 seeds; see `docs/EVALUATION.md`)
 
@@ -326,9 +375,11 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
    like any other secret.
 9. Datasets are synthetic and small; metrics are evidence for this project, not a
    claim of comprehensive real-world detection.
-10. Only traffic sent **through the gateway** is protected. Employees using AI
-    websites directly are not covered until the browser extension (Phase 6), and
-    then only on supported sites.
+10. Only traffic sent **through the gateway** is fully protected. The browser
+    extension adds a check on four AI websites in Chrome, for prompts typed into
+    the recognised editor; it does not cover other browsers or devices, other
+    sites, file uploads or non-UI sending, and a user can disable it unless
+    enterprise policy forces it (see `extension/README.md`).
 11. Bulk prompts producing more than 5,000 candidate detections are blocked
     outright (fail closed) rather than inspected.
 12. **Audit rollback** is detected only through a checkpoint stored outside the
@@ -373,11 +424,16 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 
 ## Next steps (exact)
 
-1. Push, then read the CI annotations for the backend job (see "CI status"
-   above) and fix whatever fails only on GitHub's runners.
-2. **Phase 6 — Chrome MV3 extension:** least-privilege manifest (only the
-   gateway origin and the supported AI sites), content script that sends the
-   prompt to `/v1/inspect` before submission on supported sites, shows the
-   decision and offers the redacted text; options page for the gateway URL and an
-   API key kept in `chrome.storage.session`; no remote code; tests for the
-   message flow; honest documentation of what it cannot cover.
+**Phase 7 — hardening, load and security testing**
+
+1. Load test the gateway (inspect, chat, streaming) and record latency and
+   throughput; profile the detection engine on large prompts.
+2. Security testing: automated API fuzzing (schemathesis) against the OpenAPI
+   schema, dependency audits (pip-audit, npm audit) in CI, a ZAP baseline scan of
+   the dashboard, pin GitHub Actions to commit SHAs, Trusted Types for the
+   dashboard.
+3. Deployment hardening: Dockerfile (non-root, read-only filesystem), production
+   settings checklist (keys from a secret store, HTTPS reverse proxy, trusted
+   proxy headers for rate limits), backup/restore and checkpoint export for the
+   audit log.
+4. Re-run the evaluation and the full live walkthrough; update all reports.

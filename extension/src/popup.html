@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Shadow AI Guardrail</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body class="popup">
+    <h1>Shadow AI Guardrail</h1>
+    <p id="status" class="muted" role="status">Checking…</p>
+    <dl>
+      <dt>Gateway</dt><dd id="gateway">–</dd>
+      <dt>Signed in as</dt><dd id="user">–</dd>
+      <dt>If unavailable</dt><dd id="failmode">–</dd>
+    </dl>
+    <label class="row"><input type="checkbox" id="enabled" /> Check prompts on AI sites</label>
+    <p id="locked" class="muted" hidden>Managed by your organisation.</p>
+    <p class="muted small">Protected sites: ChatGPT, Claude, Gemini, Microsoft Copilot.</p>
+    <button type="button" id="options">Settings</button>
+    <script src="popup.js"></script>
+  </body>
+</html>
