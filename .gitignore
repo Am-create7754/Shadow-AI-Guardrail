@@ -44,3 +44,6 @@ desktop.ini
 
 # --- Generated deployment output ---
 deploy/chrome-policy/out/
+
+# --- Tool caches ---
+.schemathesis/
