@@ -19,8 +19,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import re
 import secrets
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -30,7 +32,7 @@ import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from sqlalchemy import Table, func, insert, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.audit.chain import utc_timestamp
@@ -46,6 +48,10 @@ JWT_ISSUER = "guardrail"
 JWT_AUDIENCE = "guardrail-api"
 JWT_ALGORITHM = "HS256"
 MAX_API_KEYS_PER_USER = 20
+# API keys' last_used_at is precise to this many seconds (one write per key per window).
+LAST_USED_RESOLUTION_S = 60.0
+
+logger = logging.getLogger("guardrail.auth")
 # A tiny deny-list of the most common choices; length is the main defence.
 _COMMON_PASSWORDS = frozenset(
     {
@@ -124,6 +130,7 @@ class AuthService:
         self._ttl = timedelta(minutes=token_ttl_minutes)
         self._hasher = PasswordHasher()
         self._dummy_hash = self._hasher.hash(secrets.token_urlsafe(16))
+        self._last_touched: dict[str, float] = {}  # key id -> monotonic time of last write
 
     def __repr__(self) -> str:
         return "AuthService()"
@@ -339,13 +346,34 @@ class AuthService:
             return None
         if row.revoked_at is not None or not row.is_active:
             return None
-        async with self.engine.begin() as conn:
-            await conn.execute(
-                update(API_KEYS)
-                .where(API_KEYS.c.id == row.key_id)
-                .values(last_used_at=utc_timestamp())
-            )
+        await self._touch_api_key(row.key_id)
         return _row_to_user(row)
+
+    async def _touch_api_key(self, key_id: str) -> None:
+        """Record use at most once per LAST_USED_RESOLUTION_S per key.
+
+        A write per request competed with audit writes for SQLite's single write
+        lock under load (Phase 7 load test). Best effort: the timestamp is
+        informational, so a busy database never fails the request.
+        """
+        now = time.monotonic()
+        last = self._last_touched.get(key_id)
+        if last is not None and now - last < LAST_USED_RESOLUTION_S:
+            return
+        self._last_touched[key_id] = now
+        if len(self._last_touched) > 10_000:  # bounded memory
+            self._last_touched.clear()
+        try:
+            async with self.engine.connect() as raw_conn:
+                conn = await raw_conn.execution_options(sqlite_begin="IMMEDIATE")
+                async with conn.begin():
+                    await conn.execute(
+                        update(API_KEYS)
+                        .where(API_KEYS.c.id == key_id)
+                        .values(last_used_at=utc_timestamp())
+                    )
+        except OperationalError as exc:
+            logger.warning("could not record API key use (%s)", type(exc).__name__)
 
     # ----------------------------------------------------------------- tokens
     def issue_token(self, user: User) -> tuple[str, int]:

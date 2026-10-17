@@ -41,6 +41,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import uuid
 from collections.abc import Iterable, Iterator
@@ -164,10 +165,28 @@ class VerificationReport:
         }
 
 
+@dataclass
+class _Pending:
+    """An event waiting for the group commit; ``done`` resolves when committed."""
+
+    ev: AuditEventIn
+    data_json: str
+    occurred_at: str
+    done: asyncio.Future[AuditRecord]
+
+
 def _retryable(exc: Exception) -> bool:
     if isinstance(exc, ConcurrentAppendError | IntegrityError):
         return True
     return isinstance(exc, OperationalError) and "locked" in str(exc).lower()
+
+
+# Identifiers the gateway generates (uuid4().hex: request, approval, user, key
+# ids). Not scanned: about 1 in 10,000 contains a digit run that passes the card
+# checksum, and refusing those events failed requests closed at random (found
+# by the Phase 7 load test). A secret cannot hide in exactly 32 hex characters
+# without being one of these identifiers' shape, and anything else is scanned.
+_HEX_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def _scan_pieces(ev: AuditEventIn) -> Iterator[str]:
@@ -180,14 +199,14 @@ def _scan_pieces(ev: AuditEventIn) -> Iterator[str]:
     """
     yield ev.event_type
     yield ev.actor
-    if ev.request_id:
+    if ev.request_id and not _HEX_ID.fullmatch(ev.request_id):
         yield ev.request_id
 
     def walk(value: Any) -> Iterator[str]:
         if isinstance(value, dict):
             for k, v in value.items():
                 yield str(k)
-                if isinstance(v, str):
+                if isinstance(v, str) and not _HEX_ID.fullmatch(v):
                     yield f"{k}={v}"
                 yield from walk(v)
         elif isinstance(value, list):
@@ -196,7 +215,7 @@ def _scan_pieces(ev: AuditEventIn) -> Iterator[str]:
                 yield " ".join(scalars)
             for v in value:
                 yield from walk(v)
-        elif isinstance(value, str):
+        elif isinstance(value, str) and not _HEX_ID.fullmatch(value):
             yield value
 
     yield from walk(ev.data)
@@ -216,6 +235,12 @@ class AuditLog:
     ) -> None:
         self.engine = engine
         self.keyring = keyring
+        # In-process writers queue here instead of contending for SQLite's write
+        # lock (its busy handler retries with growing sleeps: multi-second tails
+        # and rare timeouts under load), and are committed in groups (see
+        # append). BEGIN IMMEDIATE still serialises writers across processes.
+        self._append_lock = asyncio.Lock()
+        self._queue: list[_Pending] = []
         self.signer = signer
         if verifier is None and signer is not None:
             verifier = CheckpointVerifier([signer.public_key])
@@ -274,26 +299,69 @@ class AuditLog:
             raise UnsafeAuditDataError(f"audit event rejected: contains {', '.join(hits)}")
 
     async def append(self, ev: AuditEventIn) -> AuditRecord:
+        """Append one event and return it once it is **committed**.
+
+        Group commit: events from concurrent callers in this process are queued,
+        and whichever caller holds the writer lock commits every queued event in
+        one transaction (one disk flush). Each caller still returns only after its
+        own event is durable, and receives the error if that transaction fails,
+        so fail-closed callers behave exactly as with one transaction per event.
+        """
         self._check_safe(ev)
-        data_json = canonical_json(ev.data)
-        occurred_at = utc_timestamp(ev.occurred_at)
+        loop = asyncio.get_running_loop()
+        item = _Pending(
+            ev, canonical_json(ev.data), utc_timestamp(ev.occurred_at), loop.create_future()
+        )
+        self._queue.append(item)
+        async with self._append_lock:
+            if not item.done.done():
+                batch, self._queue = self._queue, []
+                # Its own task: if this caller is cancelled (client gone), the
+                # batch - other callers' events - is still committed, and the lock
+                # is held until it is, so transactions never overlap in-process.
+                commit = asyncio.ensure_future(self._commit_batch(batch))
+                try:
+                    await asyncio.shield(commit)
+                except asyncio.CancelledError:
+                    await asyncio.wait({commit})
+                    raise
+        return await item.done
+
+    async def _commit_batch(self, batch: list[_Pending]) -> None:
+        """Commit ``batch`` (retrying cross-process contention) and settle every future."""
         for attempt in range(MAX_APPEND_ATTEMPTS):
             try:
-                record, checkpoint = await self._append_once(ev, data_json, occurred_at)
+                records, checkpoints = await self._append_many(batch)
             except (ConcurrentAppendError, IntegrityError, OperationalError) as exc:
                 if attempt == MAX_APPEND_ATTEMPTS - 1 or not _retryable(exc):
-                    raise
+                    self._fail(batch, exc)
+                    return
                 await asyncio.sleep(0.005 * (2**attempt))
                 continue
-            if checkpoint is not None:
-                self._write_anchor(checkpoint)
-            return record
-        raise AssertionError("unreachable")  # pragma: no cover
+            except BaseException as exc:  # incl. cancellation of the committing caller
+                self._fail(batch, exc)
+                raise
+            for cp in checkpoints:
+                self._write_anchor(cp)
+            for item, record in zip(batch, records, strict=True):
+                if not item.done.done():
+                    item.done.set_result(record)
+            return
 
-    async def _append_once(
-        self, ev: AuditEventIn, data_json: str, occurred_at: str
-    ) -> tuple[AuditRecord, Checkpoint | None]:
-        checkpoint = None
+    @staticmethod
+    def _fail(batch: list[_Pending], exc: BaseException) -> None:
+        # Every waiter gets an ordinary exception, so fail-closed callers
+        # (``except Exception``) refuse their request instead of crashing.
+        err = exc if isinstance(exc, Exception) else RuntimeError("audit write interrupted")
+        for item in batch:
+            if not item.done.done():
+                item.done.set_exception(err)
+
+    async def _append_many(
+        self, batch: list[_Pending]
+    ) -> tuple[list[AuditRecord], list[Checkpoint]]:
+        records: list[AuditRecord] = []
+        checkpoints: list[Checkpoint] = []
         async with self.engine.connect() as raw_conn:
             conn = await raw_conn.execution_options(sqlite_begin="IMMEDIATE")
             async with conn.begin():
@@ -302,39 +370,49 @@ class AuditLog:
                         select(HEAD.c.seq, HEAD.c.hash).where(HEAD.c.id == 1).with_for_update()
                     )
                 ).first()
+                first_prev_seq = head.seq if head else 0
                 prev_seq, prev_hash = (head.seq, head.hash) if head else (0, GENESIS_HASH)
-                seq = prev_seq + 1
                 recorded_at = utc_timestamp()
-                payload = record_payload(
-                    seq=seq,
-                    event_id=uuid.uuid4().hex,
-                    occurred_at=occurred_at,
-                    recorded_at=recorded_at,
-                    event_type=ev.event_type,
-                    actor=ev.actor,
-                    request_id=ev.request_id,
-                    data=data_json,
-                    prev_hash=prev_hash,
-                    key_id=self.keyring.current_id,
-                )
-                mac = compute_mac(self.keyring.current, payload)
-                row = {k: v for k, v in payload.items() if k != "v"} | {"hash": mac}
-                await conn.execute(insert(EVENTS).values(**row))
+                for item in batch:
+                    seq = prev_seq + 1
+                    payload = record_payload(
+                        seq=seq,
+                        event_id=uuid.uuid4().hex,
+                        occurred_at=item.occurred_at,
+                        recorded_at=recorded_at,
+                        event_type=item.ev.event_type,
+                        actor=item.ev.actor,
+                        request_id=item.ev.request_id,
+                        data=item.data_json,
+                        prev_hash=prev_hash,
+                        key_id=self.keyring.current_id,
+                    )
+                    mac = compute_mac(self.keyring.current, payload)
+                    row = {k: v for k, v in payload.items() if k != "v"} | {"hash": mac}
+                    await conn.execute(insert(EVENTS).values(**row))
+                    records.append(AuditRecord(**(row | {"data": json.loads(item.data_json)})))
+                    if (
+                        self.signer
+                        and self.checkpoint_interval
+                        and seq % self.checkpoint_interval == 0
+                    ):
+                        checkpoints.append(await self._insert_checkpoint(conn, seq, mac))
+                    prev_seq, prev_hash = seq, mac
                 if head is None:
                     await conn.execute(
-                        insert(HEAD).values(id=1, seq=seq, hash=mac, updated_at=recorded_at)
+                        insert(HEAD).values(
+                            id=1, seq=prev_seq, hash=prev_hash, updated_at=recorded_at
+                        )
                     )
                 else:
                     result = await conn.execute(
                         update(HEAD)
-                        .where(HEAD.c.id == 1, HEAD.c.seq == prev_seq)
-                        .values(seq=seq, hash=mac, updated_at=recorded_at)
+                        .where(HEAD.c.id == 1, HEAD.c.seq == first_prev_seq)
+                        .values(seq=prev_seq, hash=prev_hash, updated_at=recorded_at)
                     )
                     if result.rowcount != 1:
                         raise ConcurrentAppendError("chain head moved during append")
-                if self.signer and self.checkpoint_interval and seq % self.checkpoint_interval == 0:
-                    checkpoint = await self._insert_checkpoint(conn, seq, mac)
-        return AuditRecord(**(row | {"data": json.loads(data_json)})), checkpoint
+        return records, checkpoints
 
     # ------------------------------------------------------------- checkpoints
     async def _insert_checkpoint(

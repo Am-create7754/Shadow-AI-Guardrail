@@ -19,7 +19,7 @@ from app.audit.chain import (
     record_payload,
 )
 from app.audit.keys import AuditKeyring, CheckpointSigner
-from app.audit.schemas import Checkpoint
+from app.audit.schemas import AuditEventIn, Checkpoint
 from app.audit.service import AuditLog, UnsafeAuditDataError
 from evaluation import synth
 from tests.audit_helpers import AUDIT_KEY, attacker, audit, event
@@ -455,3 +455,25 @@ async def test_safe_metadata_with_fingerprints_is_accepted(audit: AuditLog) -> N
     )
     assert rec.seq == 1
     assert json.loads(canonical_json(rec.data))["placeholders"] == ["[PASSWORD_1]"]
+
+
+async def test_generated_ids_that_look_like_card_numbers_are_accepted(audit: AuditLog) -> None:
+    """Regression (Phase 7 load test): ~1 in 10,000 uuid4().hex request ids contain
+    a Luhn-valid digit run; scanning them refused the event and failed the request."""
+    card_like_id = "4" + "1" * 15 + "abcdefabcdefabcd"  # 32 hex chars, card digits inside
+    rec = await audit.append(
+        AuditEventIn(
+            event_type="chat.blocked",
+            actor="u1",
+            request_id=card_like_id,
+            data={"approval_id": card_like_id, "action": "BLOCK"},
+        )
+    )
+    assert rec.request_id == card_like_id
+
+
+async def test_card_numbers_are_still_rejected_outside_id_shapes(audit: AuditLog) -> None:
+    card = "4" + "1" * 15
+    for data in ({"note": card}, {"note": f"card {card}"}, {"id": card + "abcd"}):
+        with pytest.raises(UnsafeAuditDataError, match="CREDIT_CARD"):
+            await audit.append(AuditEventIn(event_type="test.note", actor="u1", data=data))

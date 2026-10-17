@@ -81,6 +81,13 @@ async def _audit_or_fail(
         await services.record(request, event, user.id, data)
     except Exception as exc:
         # Fail closed: without an audit record, nothing may be forwarded or held.
+        # Logged by type only (the message could contain data).
+        logger.error(
+            "audit write failed (%s): %s refused (request %s)",
+            type(exc).__name__,
+            event,
+            request_id(request),
+        )
         raise ApiError(
             503, "audit_unavailable", "audit log unavailable; request not forwarded"
         ) from exc
