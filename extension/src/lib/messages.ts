@@ -2,7 +2,7 @@
 // The content script never sees the API key or the gateway address: it sends
 // the prompt text and receives a verdict.
 
-import type { FailMode } from './config'
+import type { FailMode, UploadPolicy } from './config'
 
 export type Action = 'ALLOW' | 'REDACT' | 'REQUIRE_APPROVAL' | 'BLOCK'
 
@@ -24,6 +24,8 @@ export type Verdict =
     }
   | { kind: 'unavailable'; reason: UnavailableReason; failMode: FailMode }
   | { kind: 'disabled' }
+  /** A file the gateway cannot read (not text). */
+  | { kind: 'uncheckable'; uploadPolicy: UploadPolicy }
 
 export type UnavailableReason =
   | 'not_configured'
@@ -47,11 +49,18 @@ export interface InspectMessage {
   text: string
 }
 
+/** A file about to be uploaded: its text, or null when it is not a text file. */
+export interface InspectFileMessage {
+  type: 'inspectFile'
+  name: string
+  text: string | null
+}
+
 export interface StatusMessage {
   type: 'status'
 }
 
-export type Message = InspectMessage | StatusMessage
+export type Message = InspectMessage | InspectFileMessage | StatusMessage
 
 export interface Status {
   enabled: boolean

@@ -60,6 +60,33 @@ describe('inspect messages', () => {
   })
 })
 
+describe('inspectFile messages', () => {
+  it('report non-text files as uncheckable with the upload policy, without calling the gateway', async () => {
+    const d = deps({ loadSettings: async () => ({ ...DEFAULTS, uploadPolicy: 'warn' }) })
+    const res = await handleMessage({ type: 'inspectFile', name: 'a.pdf', text: null }, tabSender('https://claude.ai/'), d)
+    expect(res).toEqual({ kind: 'uncheckable', uploadPolicy: 'warn' })
+    expect(d.fetch).not.toHaveBeenCalled()
+  })
+
+  it('inspect text files like prompts, tagged with the site', async () => {
+    const d = deps()
+    const res = await handleMessage({ type: 'inspectFile', name: 'a.txt', text: 'hi' }, tabSender('https://gemini.google.com/app'), d)
+    expect(res).toMatchObject({ kind: 'decision', action: 'ALLOW' })
+    const init = vi.mocked(d.fetch).mock.calls[0]![1] as RequestInit
+    expect(JSON.parse(init.body as string)).toEqual({ text: 'hi', source: 'extension:gemini.google.com' })
+  })
+
+  it('are refused from unsupported pages or with bad fields', async () => {
+    for (const [msg, sender] of [
+      [{ type: 'inspectFile', name: 'a.txt', text: 'x' }, tabSender('https://evil.example/')],
+      [{ type: 'inspectFile', name: 'a'.repeat(256), text: 'x' }, tabSender('https://claude.ai/')],
+      [{ type: 'inspectFile', name: 'a.txt', text: 7 }, tabSender('https://claude.ai/')],
+    ] as const) {
+      expect(await handleMessage(msg, sender, deps())).toHaveProperty('error')
+    }
+  })
+})
+
 describe('status messages', () => {
   it('are answered only for the extension pages and never contain the key', async () => {
     const res = await handleMessage({ type: 'status' }, { id: ID, url: `${ORIGIN}popup.html` }, deps())

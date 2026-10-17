@@ -12,6 +12,12 @@
       "type": "string",
       "enum": ["block", "allow"]
     },
+    "uploadPolicy": {
+      "title": "Files that cannot be checked",
+      "description": "block (default): stop uploads of files the gateway cannot read (PDF, images, archives); warn: let the user confirm",
+      "type": "string",
+      "enum": ["block", "warn"]
+    },
     "enabled": {
       "title": "Check prompts on AI sites",
       "description": "Set to true to stop users from switching the check off",

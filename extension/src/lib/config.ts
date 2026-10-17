@@ -8,6 +8,8 @@
 // (chrome.storage.managed, see managed_schema.json); pinned values win.
 
 export type FailMode = 'block' | 'allow'
+/** Files the gateway cannot read (PDF, images, archives...): block, or let the user confirm. */
+export type UploadPolicy = 'block' | 'warn'
 
 export interface Settings {
   /** Gateway origin, e.g. http://127.0.0.1:8000 */
@@ -15,15 +17,17 @@ export interface Settings {
   /** What to do when the gateway cannot give a decision. */
   failMode: FailMode
   enabled: boolean
+  uploadPolicy: UploadPolicy
 }
 
 export const DEFAULTS: Settings = {
   gatewayUrl: 'http://127.0.0.1:8000',
   failMode: 'block',
   enabled: true,
+  uploadPolicy: 'block',
 }
 
-export type ManagedKey = 'gatewayUrl' | 'failMode' | 'enabled'
+export type ManagedKey = 'gatewayUrl' | 'failMode' | 'enabled' | 'uploadPolicy'
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
@@ -66,6 +70,7 @@ function coerce(raw: Record<string, unknown>): Partial<Settings> {
   }
   if (raw.failMode === 'block' || raw.failMode === 'allow') out.failMode = raw.failMode
   if (typeof raw.enabled === 'boolean') out.enabled = raw.enabled
+  if (raw.uploadPolicy === 'block' || raw.uploadPolicy === 'warn') out.uploadPolicy = raw.uploadPolicy
   return out
 }
 

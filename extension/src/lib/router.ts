@@ -37,6 +37,17 @@ export async function handleMessage(msg: unknown, sender: Sender, deps: RouterDe
     return inspectPrompt(deps.fetch, settings, await deps.loadApiKey(), m.text, site.id)
   }
 
+  if (m.type === 'inspectFile') {
+    const site = sender.tab ? siteForUrl(sender.url) : null
+    if (!site || typeof m.name !== 'string' || m.name.length > 255) return { error: 'forbidden' }
+    if (m.text !== null && typeof m.text !== 'string') return { error: 'bad_message' }
+    const settings = await deps.loadSettings()
+    if (!settings.enabled) return { kind: 'disabled' }
+    if (m.text === null) return { kind: 'uncheckable', uploadPolicy: settings.uploadPolicy }
+    // Same check as a typed prompt: the file's text is what would leave.
+    return inspectPrompt(deps.fetch, settings, await deps.loadApiKey(), m.text, site.id)
+  }
+
   if (m.type === 'status') {
     if (!isExtensionPage(sender.url, deps.extensionOrigin)) return { error: 'forbidden' }
     const settings = await deps.loadSettings()

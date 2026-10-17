@@ -27,6 +27,13 @@
           <label class="row"><input type="radio" name="failmode" value="allow" /> Let the user send it unchecked</label>
         </fieldset>
 
+        <fieldset>
+          <legend>Uploading files that cannot be checked (PDF, images, archives)</legend>
+          <label class="row"><input type="radio" name="uploadpolicy" value="block" /> Block the upload (recommended)</label>
+          <label class="row"><input type="radio" name="uploadpolicy" value="warn" /> Warn and let the user decide</label>
+          <p class="muted small">Text and code files are always checked by the gateway before upload.</p>
+        </fieldset>
+
         <p id="locked" class="muted" hidden>Some settings are managed by your organisation and cannot be changed here.</p>
         <div class="buttons">
           <button type="submit" class="primary">Save and test</button>

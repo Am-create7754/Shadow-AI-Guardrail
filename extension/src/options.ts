@@ -8,6 +8,7 @@ import {
   saveApiKey,
   saveSettings,
   type FailMode,
+  type UploadPolicy,
 } from './lib/config'
 import type { Status } from './lib/messages'
 import { REASON_TEXT } from './lib/messages'
@@ -29,6 +30,10 @@ async function load(): Promise<void> {
   for (const r of document.querySelectorAll<HTMLInputElement>('input[name=failmode]')) {
     r.checked = r.value === settings.failMode
     r.disabled = managed.includes('failMode')
+  }
+  for (const r of document.querySelectorAll<HTMLInputElement>('input[name=uploadpolicy]')) {
+    r.checked = r.value === settings.uploadPolicy
+    r.disabled = managed.includes('uploadPolicy')
   }
   $('locked').hidden = managed.length === 0
   const stored = await loadApiKey()
@@ -61,10 +66,12 @@ async function save(e: SubmitEvent): Promise<void> {
     }
   }
   const failMode = document.querySelector<HTMLInputElement>('input[name=failmode]:checked')?.value as FailMode | undefined
+  const uploadPolicy = document.querySelector<HTMLInputElement>('input[name=uploadpolicy]:checked')?.value as UploadPolicy | undefined
   const { managed } = await loadSettings()
   await saveSettings({
     ...(managed.includes('gatewayUrl') ? {} : { gatewayUrl: origin }),
     ...(managed.includes('failMode') || !failMode ? {} : { failMode }),
+    ...(managed.includes('uploadPolicy') || !uploadPolicy ? {} : { uploadPolicy }),
   })
   const current = typed || (await loadApiKey())
   await saveApiKey(current)

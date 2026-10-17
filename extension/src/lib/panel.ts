@@ -17,8 +17,15 @@ interface Content {
   buttons: { label: string; choice: Choice; primary?: boolean }[]
 }
 
-export function describe(verdict: Verdict): Content | null {
+/** What is being checked: the typed prompt, or a file about to be uploaded. */
+export type Subject = { kind: 'prompt' } | { kind: 'file'; name: string }
+
+const PROMPT: Subject = { kind: 'prompt' }
+
+export function describe(verdict: Verdict, subject: Subject = PROMPT): Content | null {
   if (verdict.kind === 'disabled') return null
+  if (subject.kind === 'file') return describeFile(verdict, subject.name)
+  if (verdict.kind === 'uncheckable') return null // only files can be uncheckable
   if (verdict.kind === 'unavailable') {
     return {
       tone: 'block',
@@ -76,6 +83,58 @@ export function describe(verdict: Verdict): Content | null {
   }
 }
 
+function describeFile(verdict: Exclude<Verdict, { kind: 'disabled' }>, name: string): Content | null {
+  const file = `"${name.slice(0, 120)}"`
+  const ok = { label: 'OK', choice: 'dismiss' as const, primary: true }
+  if (verdict.kind === 'uncheckable') {
+    const warn = verdict.uploadPolicy === 'warn'
+    return {
+      tone: warn ? 'warn' : 'block',
+      title: warn ? 'This file cannot be checked' : 'Upload blocked - file cannot be checked',
+      body: `${file} is not a text file, so the guardrail cannot see what it contains.` +
+        (warn
+          ? ' Upload it only if you are sure it holds no confidential data, credentials or personal data.'
+          : ' Your organisation only allows uploads that can be checked. Copy the relevant text into the prompt instead.'),
+      findings: [],
+      preview: null,
+      buttons: warn
+        ? [
+            { label: 'Upload anyway', choice: 'send_unchecked' },
+            { label: 'Cancel', choice: 'dismiss', primary: true },
+          ]
+        : [ok],
+    }
+  }
+  if (verdict.kind === 'unavailable') {
+    const allow = verdict.failMode === 'allow'
+    return {
+      tone: 'block',
+      title: allow ? 'File not checked' : 'Upload blocked - guardrail unavailable',
+      body: `${file}: ${REASON_TEXT[verdict.reason]}` +
+        (allow ? ' Your organisation allows uploading without a check while the gateway is unavailable.' : ' Your organisation requires every upload to be checked first.'),
+      findings: [],
+      preview: null,
+      buttons: allow
+        ? [
+            { label: 'Upload without check', choice: 'send_unchecked' },
+            { label: 'Cancel', choice: 'dismiss', primary: true },
+          ]
+        : [ok],
+    }
+  }
+  if (verdict.action === 'ALLOW') return null
+  const findings = [...new Set(verdict.findings.map((f) => `${f.entityType} (${f.severity.toLowerCase()})`))]
+  // A file cannot be rewritten in place: anything but ALLOW stops the upload.
+  return {
+    tone: 'block',
+    title: verdict.action === 'REQUIRE_APPROVAL' ? 'Upload needs approval' : 'Upload blocked - sensitive data in file',
+    body: `${file} contains data that must not be sent to an external AI service. It was not uploaded. Remove the data from the file (or share only the parts that are needed) and try again.`,
+    findings,
+    preview: null,
+    buttons: [ok],
+  }
+}
+
 const STYLE = `
 :host { all: initial; }
 .backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 2147483647; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -97,8 +156,13 @@ button:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
 `
 
 /** Show the panel and resolve with the user's choice. */
-export function showPanel(doc: Document, verdict: Verdict, mode: ShadowRootMode = 'closed'): Promise<Choice> {
-  const content = describe(verdict)
+export function showPanel(
+  doc: Document,
+  verdict: Verdict,
+  mode: ShadowRootMode = 'closed',
+  subject: Subject = PROMPT,
+): Promise<Choice> {
+  const content = describe(verdict, subject)
   if (!content) return Promise.resolve('dismiss')
   const host = doc.createElement('div')
   host.setAttribute('data-guardrail-panel', '')

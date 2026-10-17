@@ -14,6 +14,15 @@ Gemini (`gemini.google.com`), Microsoft Copilot (`copilot.microsoft.com`).
 | BLOCK | Not sent; told to remove the data |
 | Gateway unavailable | Not sent (default), or - only if policy allows - the user may send it unchecked |
 
+**File uploads** (file picker, drag-and-drop, pasted files) on the same sites are
+held until checked. Text and code files up to 1 MB (`.txt`, `.md`, `.csv`,
+`.json`, `.env`, `.py`, `.js`, `.pem`, ... - no binary content) are inspected like
+a prompt; anything but ALLOW stops the upload (a file cannot be rewritten in
+place). Files the gateway cannot read - PDF, Office documents, images, archives,
+text files over 1 MB - are **blocked by default** (`uploadPolicy: block`); with
+`uploadPolicy: warn` the user may confirm the upload. Allowed files are handed
+back to the site unchanged. Pasted *text* is checked when the prompt is sent.
+
 ## Build and install (Windows PowerShell)
 
 ```powershell
@@ -60,8 +69,8 @@ select `extension\dist`. Open the extension's options, enter the gateway address
   approval also covers the site's own follow-up events for 3 seconds.
 - **No silent fallback:** an invalid configured gateway address means "not
   configured" (fail closed), never the localhost default.
-- **Enterprise policy:** `gatewayUrl`, `failMode` and `enabled` can be pinned with
-  Chrome policy (`managed_schema.json`).
+- **Enterprise policy:** `gatewayUrl`, `failMode`, `uploadPolicy` and `enabled` can
+  be pinned with Chrome policy (`managed_schema.json`); see `deploy/chrome-policy/`.
 
 ## Limits (honest)
 
@@ -84,8 +93,11 @@ This is a guardrail against accidental leaks, not a control a determined user
 cannot bypass: they can disable or remove the extension (unless policy forces
 it), use another browser or device, or paste into a site that is not listed.
 Only prompts typed into the recognised editor and sent with Enter, the send
-button or form submission are checked - file uploads, images, voice input, and
-pasted content that is sent by other means are not. Site selectors follow
+button or form submission, and files added through a file input, drag-and-drop
+or paste, are checked. Voice input, screenshots taken by the site itself,
+uploads started by other means, and the *contents* of files the gateway cannot
+read (PDF, Office, images) are not inspected - such files are blocked or need
+confirmation instead. Site selectors follow
 third-party markup and need maintenance when sites change. Verified with unit
 tests (jsdom) and in Chromium against pages that imitate the sites' editors
 (textarea + form, contenteditable) with the real gateway - **not on the live
