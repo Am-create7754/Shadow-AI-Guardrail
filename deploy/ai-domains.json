@@ -1,0 +1,44 @@
+{
+  "description": "Single source of AI domains for the browser policy, the extension and the network layer. Reviewed 2026-10; AI services change often - review this list regularly.",
+  "covered_by_extension": [
+    "chatgpt.com",
+    "chat.openai.com",
+    "claude.ai",
+    "gemini.google.com",
+    "copilot.microsoft.com"
+  ],
+  "block_in_browser": [
+    "perplexity.ai",
+    "chat.mistral.ai",
+    "deepseek.com",
+    "poe.com",
+    "you.com",
+    "character.ai",
+    "pi.ai",
+    "grok.com",
+    "meta.ai",
+    "chat.qwen.ai",
+    "kimi.com",
+    "huggingface.co/chat",
+    "aistudio.google.com",
+    "notebooklm.google.com",
+    "chat.groq.com",
+    "phind.com",
+    "writesonic.com",
+    "jasper.ai",
+    "openrouter.ai",
+    "lmarena.ai"
+  ],
+  "provider_apis_gateway_only": [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.mistral.ai",
+    "api.deepseek.com",
+    "api.groq.com",
+    "openrouter.ai",
+    "api.together.xyz",
+    "api.cohere.com",
+    "api-inference.huggingface.co"
+  ]
+}

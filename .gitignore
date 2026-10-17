@@ -41,3 +41,6 @@ desktop.ini
 
 # --- Local tool configuration ---
 .claude/
+
+# --- Generated deployment output ---
+deploy/chrome-policy/out/

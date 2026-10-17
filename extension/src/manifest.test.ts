@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { MATCH_PATTERNS } from './lib/sites'
+import domains from '../../deploy/ai-domains.json'
 import manifestJson from './manifest.json'
 
 // Widened so the test can assert that keys are absent.
@@ -37,5 +38,21 @@ describe('manifest', () => {
     expect(csp).toContain("script-src 'self'")
     expect(csp).toContain("object-src 'none'")
     expect(csp).not.toMatch(/unsafe|https?:|\*/)
+  })
+})
+
+describe('deploy/ai-domains.json', () => {
+  it('lists exactly the sites the extension covers', () => {
+    const hosts = MATCH_PATTERNS.map((m) => new URL(m.replace('/*', '/')).hostname)
+    expect(new Set(domains.covered_by_extension)).toEqual(new Set(hosts))
+  })
+
+  it('never blocks a covered site in the browser policy', () => {
+    for (const blocked of domains.block_in_browser) {
+      const host = blocked.split('/')[0]!
+      for (const covered of domains.covered_by_extension) {
+        expect(covered === host || covered.endsWith(`.${host}`)).toBe(false)
+      }
+    }
   })
 })
