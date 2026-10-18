@@ -4,7 +4,8 @@ Checks prompts typed into AI chat sites with the organisation's guardrail
 gateway **before** the site receives them.
 
 Supported sites: ChatGPT (`chatgpt.com`, `chat.openai.com`), Claude (`claude.ai`),
-Gemini (`gemini.google.com`), Microsoft Copilot (`copilot.microsoft.com`).
+Gemini (`gemini.google.com`), Microsoft Copilot (`copilot.microsoft.com`, which now
+redirects to `copilot.com`, also covered).
 
 | Gateway decision | What the user sees |
 |---|---|

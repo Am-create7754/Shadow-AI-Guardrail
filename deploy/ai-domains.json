@@ -5,7 +5,8 @@
     "chat.openai.com",
     "claude.ai",
     "gemini.google.com",
-    "copilot.microsoft.com"
+    "copilot.microsoft.com",
+    "copilot.com"
   ],
   "block_in_browser": [
     "perplexity.ai",

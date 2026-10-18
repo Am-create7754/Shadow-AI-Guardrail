@@ -150,12 +150,12 @@ def main() -> int:
     finally:
         docker("rm", "-f", NAME)
 
-    failed = sum(not ok for _, ok, _ in results)
-    print(
-        f"::notice title=Docker image::{len(results) - failed}/{len(results)} checks passed",
-        flush=True,
-    )
-    return 1 if failed else 0
+    failed_names = [name for name, ok, _ in results if not ok]
+    summary = f"{len(results) - len(failed_names)}/{len(results)} checks passed"
+    if failed_names:
+        summary += "; failed: " + "; ".join(failed_names)
+    print(f"::notice title=Docker image::{summary}", flush=True)
+    return 1 if failed_names else 0
 
 
 if __name__ == "__main__":

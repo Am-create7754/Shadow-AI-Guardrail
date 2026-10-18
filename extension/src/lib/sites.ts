@@ -37,7 +37,8 @@ export const SITES: readonly SiteAdapter[] = [
   },
   {
     id: 'copilot.microsoft.com',
-    hosts: ['copilot.microsoft.com'],
+    // copilot.microsoft.com redirects to copilot.com (found by the live check, 2026-10-18).
+    hosts: ['copilot.microsoft.com', 'copilot.com'],
     editor: 'textarea#userInput, textarea[data-testid="composer-input"]',
     send: 'button[data-testid="submit-button"], button[aria-label="Submit message"]',
   },

@@ -65,11 +65,21 @@ async function deepText(page) {
   const { root } = await client.send('DOM.getDocument', { depth: -1, pierce: true })
   const parts = []
   const walk = (n) => {
+    if (n.nodeName === 'STYLE' || n.nodeName === 'SCRIPT') return
     if (n.nodeType === 3 && n.nodeValue.trim()) parts.push(n.nodeValue.trim())
     for (const c of [...(n.children ?? []), ...(n.shadowRoots ?? []), ...(n.contentDocument ? [n.contentDocument] : [])]) walk(c)
   }
   walk(root)
-  return parts.join(' | ')
+  return parts
+}
+
+/** The status cell of a policy row: the value after the first "Status" label
+ *  following the policy's name (the page lists name, value, ..., Status, OK). */
+function statusOf(parts, name) {
+  const at = parts.indexOf(name)
+  if (at < 0) return 'missing'
+  const label = parts.indexOf('Status', at)
+  return label < 0 || label - at > 40 ? 'unknown' : parts[label + 1]
 }
 
 for (const b of BROWSERS) {
@@ -98,14 +108,20 @@ for (const b of BROWSERS) {
     // 2. The browser's policy page lists our policies, applied without errors.
     await page.goto(b.policyPage)
     await page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 }).catch(() => {})
-    const text = await deepText(page)
+    const parts = await deepText(page)
+    const text = parts.join(' | ')
     for (const name of ['ExtensionInstallForcelist', 'URLBlocklist', b.privateMode, 'BrowserGuestModeEnabled']) {
-      check(`${b.name}: policy ${name} listed`, text.includes(name))
+      const status = statusOf(parts, name)
+      check(`${b.name}: policy ${name} applied`, status === 'OK', status)
     }
     check(`${b.name}: extension policy listed`, text.includes(id) && text.includes('gatewayUrl'))
-    const errors = /(Error|Unknown policy|Ignored|deprecated)/i.exec(text)
-    console.log(`::notice title=${b.name} policy page::${text.slice(0, 900).replace(/[\r\n%]/g, ' ')}`)
-    check(`${b.name}: no policy errors reported`, !errors, errors ? text.slice(Math.max(0, errors.index - 80), errors.index + 80) : '')
+    for (const name of ['gatewayUrl', 'failMode', 'uploadPolicy', 'enabled']) {
+      const status = statusOf(parts, name)
+      check(`${b.name}: extension policy ${name} applied`, status === 'OK', status)
+    }
+    const at = parts.indexOf('URLBlocklist')
+    const excerpt = parts.slice(Math.max(0, at - 5), at + 40).join(' | ')
+    console.log(`::notice title=${b.name} policy page::${excerpt.replace(/[\r\n%]/g, ' ').slice(0, 900)}`)
 
     // 3. The extension reads the pinned settings (chrome.storage.managed): its
     //    options page shows them locked.
