@@ -153,10 +153,26 @@ for (const b of BROWSERS) {
       check(`${b.name}: test extension has the policy's id`, installed === id, installed)
     } else {
       // No manual install: the policy must make Chrome fetch and install it.
-      const sw = await browser
-        .waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${id}/`), { timeout: 90000 })
-        .catch(() => null)
-      check(`${b.name}: extension force-installed by policy from the update server`, !!sw, `fetched: ${updateServer.fetched.join(', ')}`)
+      // Chrome's own list of installed extensions is the evidence.
+      const diag = await browser.newPage()
+      let internals = ''
+      const end = Date.now() + 120000
+      while (Date.now() < end) {
+        await diag.goto('chrome://extensions-internals').catch(() => {})
+        internals = await diag.evaluate(() => document.body?.innerText ?? '').catch(() => '')
+        if (internals.includes(id)) break
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+      const at = internals.indexOf(id)
+      note(`${b.name} chrome://extensions-internals`, at >= 0 ? internals.slice(Math.max(0, at - 200), at + 700) : internals.slice(0, 900))
+      check(`${b.name}: extension force-installed by policy from the update server`, at >= 0, `fetched: ${updateServer.fetched.join(', ')}`)
+      if (at < 0) {
+        await diag.goto('chrome://policy').catch(() => {})
+        const parts = await deepText(diag)
+        const p = parts.indexOf('ExtensionInstallForcelist')
+        note(`${b.name} force-install policy row`, parts.slice(p, p + 30).join(' | '))
+      }
+      await diag.close()
     }
 
     // 1. Uncovered AI sites are blocked by the browser itself (before any request).
