@@ -187,6 +187,7 @@ def main() -> int:
     ap.add_argument("--concurrency", type=int, default=16)
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--report", type=Path)
+    ap.add_argument("--github-notice", action="store_true", help="results as CI annotations")
     args = ap.parse_args()
 
     workdir = Path(tempfile.mkdtemp(prefix="guardrail-load-"))
@@ -241,6 +242,13 @@ def main() -> int:
     load_table = _table(header, [r.row() for r in results])
     engine_table = _table(["Input chars", "Median ms", "MB/s"], engine_benchmark())
     print(load_table)
+    if args.github_notice:
+        for r in results:
+            name, n, rps, p50, p95, p99, errs, codes = r.row()
+            print(
+                f"::notice title=Load {name}::{n} requests, {rps} req/s, "
+                f"p50 {p50} ms, p95 {p95} ms, p99 {p99} ms, errors {errs} ({codes})"
+            )
     print()
     print(engine_table)
     if args.report:

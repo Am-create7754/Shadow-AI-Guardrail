@@ -7,13 +7,15 @@
     "build": "tsc --noEmit && node build.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "node e2e/run.mjs"
   },
   "devDependencies": {
     "@types/chrome": "0.3.5",
     "esbuild": "0.28.2",
     "jsdom": "29.1.1",
     "oxlint": "1.88.0",
+    "puppeteer-core": "25.12.0",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
   }

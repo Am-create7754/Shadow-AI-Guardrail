@@ -1,0 +1,21 @@
+name: docker
+
+on:
+  push:
+    paths: ["Dockerfile", ".dockerignore", "backend/**", "frontend/**", ".github/workflows/docker.yml", ".github/scripts/docker_smoke.py"]
+  pull_request:
+    paths: ["Dockerfile", ".dockerignore", "backend/**", "frontend/**", ".github/workflows/docker.yml", ".github/scripts/docker_smoke.py"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t guardrail .
+      - name: Smoke test (production mode, read-only root, unprivileged user)
+        run: python3 .github/scripts/docker_smoke.py

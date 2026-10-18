@@ -2,9 +2,9 @@ name: extension
 
 on:
   push:
-    paths: ["extension/**", ".github/workflows/extension.yml"]
+    paths: ["extension/**", "deploy/**", "backend/app/**", ".github/workflows/extension.yml"]
   pull_request:
-    paths: ["extension/**", ".github/workflows/extension.yml"]
+    paths: ["extension/**", "deploy/**", "backend/app/**", ".github/workflows/extension.yml"]
 
 permissions:
   contents: read
@@ -30,3 +30,50 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm audit --audit-level=high
+
+  e2e:
+    name: real Chrome end-to-end (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: python -m pip install -e "./backend"
+      - run: npm ci
+        working-directory: extension
+      - run: npm run build
+        working-directory: extension
+      - run: node e2e/run.mjs
+        working-directory: extension
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          GUARDRAIL_PYTHON: python
+
+  policy:
+    name: policy pack on Windows (Chrome + Edge)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm ci
+        working-directory: extension
+      - run: npm run build
+        working-directory: extension
+      - run: node e2e/policy_check.mjs
+        working-directory: extension

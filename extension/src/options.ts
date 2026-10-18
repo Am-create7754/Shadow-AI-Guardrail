@@ -15,6 +15,9 @@ import { REASON_TEXT } from './lib/messages'
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 const gateway = $<HTMLInputElement>('gateway')
+// Loading is asynchronous: never overwrite what the user already typed.
+let gatewayEdited = false
+gateway.addEventListener('input', () => (gatewayEdited = true))
 const key = $<HTMLInputElement>('key')
 const result = $('result')
 
@@ -25,7 +28,7 @@ function say(text: string, ok: boolean): void {
 
 async function load(): Promise<void> {
   const { settings, managed } = await loadSettings()
-  gateway.value = settings.gatewayUrl
+  if (!gatewayEdited || gateway.disabled) gateway.value = settings.gatewayUrl
   gateway.disabled = managed.includes('gatewayUrl')
   for (const r of document.querySelectorAll<HTMLInputElement>('input[name=failmode]')) {
     r.checked = r.value === settings.failMode
@@ -76,6 +79,7 @@ async function save(e: SubmitEvent): Promise<void> {
   const current = typed || (await loadApiKey())
   await saveApiKey(current)
   key.value = ''
+  gatewayEdited = false
   await load()
 
   const status = (await chrome.runtime.sendMessage({ type: 'status' })) as Status | { error: string }

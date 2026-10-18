@@ -44,3 +44,6 @@ jobs:
       - name: API fuzzing (no request may cause a server error)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: python -m loadtest.fuzz --max-examples 50
+      - name: Load test (second machine; results as annotations)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        run: python -m loadtest.run --requests 300 --concurrency 16 --github-notice
