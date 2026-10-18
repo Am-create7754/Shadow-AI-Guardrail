@@ -202,8 +202,20 @@ for (const b of BROWSERS) {
     }
 
     // 3. The extension reads the pinned settings (chrome.storage.managed).
-    const opts = await browser.newPage()
-    await opts.goto(`chrome-extension://${id}/options.html`)
+    // A freshly force-installed extension may still be initialising: a
+    // navigation can be interrupted ("frame was detached"), so retry on a new tab.
+    let opts
+    for (let attempt = 1; ; attempt++) {
+      opts = await browser.newPage()
+      try {
+        await opts.goto(`chrome-extension://${id}/options.html`, { waitUntil: 'load', timeout: 20000 })
+        break
+      } catch (e) {
+        await opts.close().catch(() => {})
+        if (attempt === 5) throw e
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+    }
     await opts.waitForFunction(() => document.getElementById('gateway')?.value !== '', { timeout: 15000 }).catch(() => {})
     const state = await opts.evaluate(() => ({
       gateway: document.getElementById('gateway').value,
