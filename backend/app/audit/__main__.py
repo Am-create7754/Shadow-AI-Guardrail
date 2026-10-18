@@ -28,6 +28,7 @@ from typing import Any
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy.engine import make_url
 
 from app.audit.keys import CHECKPOINT_KEY_FILE, load_audit_keyring, load_checkpoint_signer
 from app.audit.schemas import AuditEventIn, Checkpoint
@@ -42,7 +43,8 @@ def _print(obj: Any) -> None:
 
 def _alembic_upgrade(url: str) -> None:
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
-    cfg.set_main_option("sqlalchemy.url", url)
+    # Alembic config values are %-interpolated: a "%" in the path must be escaped.
+    cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     command.upgrade(cfg, "head")
 
 
@@ -126,9 +128,11 @@ async def _tamper_demo() -> int:
 
 
 def _sqlite_path(database_url: str) -> Path:
-    if not database_url.startswith("sqlite") or ":///" not in database_url:
+    url = make_url(database_url)
+    if url.get_backend_name() != "sqlite":
         raise ValueError("backup supports SQLite only; use pg_dump for PostgreSQL")
-    path = database_url.split(":///", 1)[1]
+    # Exactly the file the application opens (SQLAlchemy percent-decodes the path).
+    path = url.database
     if not path or path == ":memory:":
         raise ValueError("in-memory database cannot be backed up")
     return Path(path)
@@ -142,7 +146,8 @@ def _backup(settings: Settings, out: Path) -> int:
         print(f"refusing to overwrite {out}", file=sys.stderr)
         return 2
     out.parent.mkdir(parents=True, exist_ok=True)
-    src = sqlite3.connect(f"file:{src_path.as_posix()}?mode=ro", uri=True)
+    # Proper file URI: a path containing ?, # or % must not change its meaning.
+    src = sqlite3.connect(src_path.resolve().as_uri() + "?mode=ro", uri=True)
     dst = sqlite3.connect(out)
     try:
         src.backup(dst)

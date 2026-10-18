@@ -27,6 +27,14 @@ operations).
 | Developer API key | 24 / 24 | 1,569 | **0** |
 | Administrator API key | 24 / 24 | 1,543 | **0** |
 
+A later run with 200 examples per operation found **one** server error that the
+50-example CI runs had hit only once (on commit `8e8b19d`): `GET
+/v1/admin/audit/events?before_seq=1565795716699987953715590266355712` - a value
+beyond SQLite's 64-bit INTEGER overflowed in the database driver (500). Fixed:
+`before_seq` is bounded (`le=2**63-1`, 422 beyond),
+`test_out_of_range_audit_cursor_is_rejected_not_a_server_error` (fails on the old
+code). Re-run after the fix: 9,252 requests, **0** server errors.
+
 Coverage limits reported by Schemathesis (honest): approval and API-key ids
 cannot be discovered from the schema, so `/v1/admin/approvals/{id}...` and
 `DELETE /v1/me/api-keys/{id}` were mostly exercised with unknown ids (404);

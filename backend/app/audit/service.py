@@ -181,12 +181,20 @@ def _retryable(exc: Exception) -> bool:
     return isinstance(exc, OperationalError) and "locked" in str(exc).lower()
 
 
-# Identifiers the gateway generates (uuid4().hex: request, approval, user, key
-# ids). Not scanned: about 1 in 10,000 contains a digit run that passes the card
-# checksum, and refusing those events failed requests closed at random (found
-# by the Phase 7 load test). A secret cannot hide in exactly 32 hex characters
-# without being one of these identifiers' shape, and anything else is scanned.
+# Identifiers the gateway generates (uuid4().hex). About 1 in 10,000 contains a
+# digit run that passes the card checksum, and refusing those events failed
+# requests closed at random (Phase 7 load test). They are exempt from the scan
+# only in identifier fields: the same shape under any other key (some real
+# tokens are 32 lowercase hex, e.g. {"password": ...}) is still scanned.
 _HEX_ID = re.compile(r"[0-9a-f]{32}")
+_ID_FIELDS = frozenset(
+    {"request_id", "approval_id", "user_id", "key_id", "id", "decided_by", "requester_id",
+     "created_by", "event_id"}
+)  # fmt: skip
+
+
+def _is_generated_id(key: str, value: str) -> bool:
+    return key in _ID_FIELDS and _HEX_ID.fullmatch(value) is not None
 
 
 def _scan_pieces(ev: AuditEventIn) -> Iterator[str]:
@@ -199,14 +207,16 @@ def _scan_pieces(ev: AuditEventIn) -> Iterator[str]:
     """
     yield ev.event_type
     yield ev.actor
-    if ev.request_id and not _HEX_ID.fullmatch(ev.request_id):
+    if ev.request_id and not _is_generated_id("request_id", ev.request_id):
         yield ev.request_id
 
     def walk(value: Any) -> Iterator[str]:
         if isinstance(value, dict):
             for k, v in value.items():
                 yield str(k)
-                if isinstance(v, str) and not _HEX_ID.fullmatch(v):
+                if isinstance(v, str) and _is_generated_id(str(k), v):
+                    continue  # a generated identifier in an identifier field
+                if isinstance(v, str):
                     yield f"{k}={v}"
                 yield from walk(v)
         elif isinstance(value, list):
@@ -215,7 +225,7 @@ def _scan_pieces(ev: AuditEventIn) -> Iterator[str]:
                 yield " ".join(scalars)
             for v in value:
                 yield from walk(v)
-        elif isinstance(value, str) and not _HEX_ID.fullmatch(value):
+        elif isinstance(value, str):
             yield value
 
     yield from walk(ev.data)
@@ -313,22 +323,44 @@ class AuditLog:
             ev, canonical_json(ev.data), utc_timestamp(ev.occurred_at), loop.create_future()
         )
         self._queue.append(item)
-        async with self._append_lock:
+        try:
+            await self._append_lock.acquire()
+        except asyncio.CancelledError:
+            # Cancelled before anyone took the event: withdraw it, so it is not
+            # committed later for a request that was never carried out.
+            if not item.done.done() and item in self._queue:
+                self._queue.remove(item)
+                item.done.cancel()
+            raise
+        try:
             if not item.done.done():
                 batch, self._queue = self._queue, []
                 # Its own task: if this caller is cancelled (client gone), the
                 # batch - other callers' events - is still committed, and the lock
-                # is held until it is, so transactions never overlap in-process.
+                # is held until it is (even if cancellation is delivered again),
+                # so transactions never overlap in-process.
                 commit = asyncio.ensure_future(self._commit_batch(batch))
-                try:
-                    await asyncio.shield(commit)
-                except asyncio.CancelledError:
-                    await asyncio.wait({commit})
-                    raise
+                cancelled = False
+                while not commit.done():
+                    try:
+                        await asyncio.shield(commit)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                if cancelled:
+                    raise asyncio.CancelledError
+        finally:
+            self._append_lock.release()
         return await item.done
 
     async def _commit_batch(self, batch: list[_Pending]) -> None:
         """Commit ``batch`` (retrying cross-process contention) and settle every future."""
+        try:
+            await self._commit_batch_once(batch)
+        finally:
+            # Whatever happened, no caller may wait forever on its future.
+            self._fail(batch, RuntimeError("audit batch ended without a result"))
+
+    async def _commit_batch_once(self, batch: list[_Pending]) -> None:
         for attempt in range(MAX_APPEND_ATTEMPTS):
             try:
                 records, checkpoints = await self._append_many(batch)
@@ -341,11 +373,15 @@ class AuditLog:
             except BaseException as exc:  # incl. cancellation of the committing caller
                 self._fail(batch, exc)
                 raise
-            for cp in checkpoints:
-                self._write_anchor(cp)
+            # Committed: settle the callers first, then anchor (best effort).
             for item, record in zip(batch, records, strict=True):
                 if not item.done.done():
                     item.done.set_result(record)
+            for cp in checkpoints:
+                try:
+                    self._write_anchor(cp)
+                except Exception as exc:  # the events are committed already
+                    logger.warning("audit anchor not written (%s)", type(exc).__name__)
             return
 
     @staticmethod

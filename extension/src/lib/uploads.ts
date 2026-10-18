@@ -67,11 +67,21 @@ export function redeliverFiles(kind: 'input' | 'drop' | 'paste', target: EventTa
   }
 }
 
+/** The real target: inside a shadow root, events reach the window retargeted to
+ *  the shadow host, so the input itself is only visible in the composed path. */
+function realTarget(e: Event): EventTarget | null {
+  return e.composedPath()[0] ?? e.target
+}
+
+function isFileInput(t: EventTarget | null): t is HTMLInputElement {
+  return t instanceof HTMLInputElement && t.type === 'file'
+}
+
 function filesOf(e: Event): File[] {
   if (e.type === 'drop') return Array.from((e as DragEvent).dataTransfer?.files ?? [])
   if (e.type === 'paste') return Array.from((e as ClipboardEvent).clipboardData?.files ?? [])
-  const t = e.target
-  return t instanceof HTMLInputElement && t.type === 'file' ? Array.from(t.files ?? []) : []
+  const t = realTarget(e)
+  return isFileInput(t) ? Array.from(t.files ?? []) : []
 }
 
 export function installUploadGuard({
@@ -106,11 +116,14 @@ export function installUploadGuard({
 
   const onFiles = (e: Event): void => {
     if (!isTrusted(e)) return // our own re-delivery (or page code with files it already has)
-    const target = e.target
-    const isInput = target instanceof HTMLInputElement && target.type === 'file'
+    const target = realTarget(e)
+    const isInput = isFileInput(target)
     if (isInput && pendingInputs.has(target)) {
-      // The second event (input/change) of the same pick: already held.
+      // The second event (input/change) of the same pick, or a new pick while
+      // the first is being checked: held, and the input emptied so the site
+      // cannot read unchecked files from it.
       e.stopImmediatePropagation()
+      target.value = ''
       return
     }
     const files = filesOf(e)

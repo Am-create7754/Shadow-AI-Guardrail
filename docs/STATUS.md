@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-10-18 · Current phase: **Phase 6 complete → Phase 7 next**_
+_Last updated: 2026-10-18 · Current phase: **Phase 7 complete → Phase 8 next**_
 
 Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ not started
 
@@ -15,7 +15,7 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | 4 | Real provider adapter, output inspection, streaming | ✅ |
 | 5 | Developer portal + admin dashboard (React) | ✅ |
 | 6 | Chrome MV3 extension | ✅ |
-| 7 | Hardening, load and security testing | ⬜ |
+| 7 | Hardening, load and security testing | ✅ |
 | 8 | Academic deliverables (SRS, diagrams, STRIDE, report) | ⬜ |
 
 ## Completed features (with evidence)
@@ -78,19 +78,29 @@ Legend: ✅ implemented and verified by automated tests · 🟡 partial · ⬜ n
 | Replay bound to the exact approved text (edits during the check are not sent); only real user input starts a check | `does not replay if the text changed...` (verified to fail when the check is removed) |
 | Least privilege manifest: `storage` only, loopback gateway hosts, runtime HTTPS origin request, listed sites only, no web-accessible resources, strict CSP | `manifest.test.ts` |
 | Gateway: `/v1/inspect` `source` label (validated, audited, sensitive-looking refused); dashboard "AI sites checked by the browser extension" | `test_inspect_source_*`, `test_sensitive_looking_source_is_refused`; live dashboard check |
+| **Phase 7** — Extension checks file uploads (picker, drag-and-drop, pasted files): text/code files inspected, anything but ALLOW stops the upload; unreadable files (PDF, Office, images) blocked by default (`uploadPolicy`) | `extension/src/lib/uploads.test.ts`; live Chromium run (blocked `.env`, allowed picks/drops re-delivered, PNG blocked) |
+| Enterprise policy pack: force-install, pinned settings, URLBlocklist for uncovered AI sites, Incognito/Guest off; Chrome + Edge `.reg`, Linux/macOS JSON, `updates.xml`, network blocklist; organisation build with the gateway host | `deploy/chrome-policy/`; generator run with sample values; `manifest.test.ts` keeps `deploy/ai-domains.json` in sync |
+| Defence-in-depth architecture, network egress rules and threat model with residual risk | `docs/SECURITY-ARCHITECTURE.md` |
+| Load testing of an isolated gateway (5 scenarios, concurrent clients) and detection-engine benchmark; found and fixed a lock-contention latency tail and random fail-closed 503s | `backend/loadtest/`, `docs/PERFORMANCE.md`, `test_generated_ids_that_look_like_card_numbers_are_accepted` |
+| Audit group commit: concurrent events share a transaction; each caller returns only once its record is durable; failures and cancellation handled | `tests/test_audit_group_commit.py`, concurrency tests (4 processes) |
+| API fuzzing (Schemathesis, developer + admin, 24/24 operations, 3,112 requests, 0 server errors), `pip-audit` and `npm audit` in CI, Actions pinned to SHAs, dashboard Trusted Types | `backend/loadtest/fuzz.py`, `docs/SECURITY-TESTING.md`, `test_api_dashboard_static.py` |
+| Verified online backups (`python -m app.audit backup`), production checklist, Dockerfile (not built) | `test_backup_*`, `docs/DEPLOYMENT.md`; live backup of the dev database while serving |
 
 ## Latest test results
 
 Command: `backend\scripts\check.ps1` (Windows PowerShell)
 
 - ruff lint: pass · ruff format: pass · mypy `--strict`: no issues in 67 files
-- pytest: **689 passed, 5 skipped** (the 5 live-provider tests are opt-in and
+- pytest: **701 passed, 5 skipped** (the 5 live-provider tests are opt-in and
   passed separately against Gemini). Un-awaited coroutines fail the suite.
 - Frontend (`frontend\scripts\check.ps1`): oxlint (warnings are errors) pass,
   `tsc` strict pass, Vitest **28 passed**, production build pass, `npm audit`: 0
   vulnerabilities.
 - Extension (`extension\scripts\check.ps1`): oxlint pass, `tsc` strict pass,
-  Vitest **74 passed**, esbuild bundle pass, `npm audit`: 0 vulnerabilities.
+  Vitest **93 passed**, esbuild bundle pass, `npm audit`: 0 vulnerabilities.
+- `pip-audit --strict`: no known vulnerabilities. API fuzzing: 9,252 requests, 0
+  server errors after the fix below (`docs/SECURITY-TESTING.md`). Load test: 2,500 requests, 0 errors
+  (`docs/PERFORMANCE.md`).
 
 ## Independent security review (Phase 1)
 
@@ -277,6 +287,54 @@ with no untrusted expressions in `run:`.
 | 9 | Info | Limits of any extension (hostile site page, shadow DOM, iframes, pointerdown sends) | Documented in `extension/README.md` | - |
 | 10 | Info | Actions pinned by tag | Phase 7 (SHA pinning) | - |
 
+## Phase 7 summary (2026-10-18)
+
+Closing the extension's gaps with layers (`docs/SECURITY-ARCHITECTURE.md`):
+upload checks in the extension, an enterprise policy pack (force-install,
+locked settings, URL blocklist, no Incognito/Guest), and network egress rules.
+Hardening: load testing (`docs/PERFORMANCE.md`), security testing
+(`docs/SECURITY-TESTING.md`), deployment (`docs/DEPLOYMENT.md`).
+
+Defects found by Phase 7 testing and fixed (each with a test that fails on the old code):
+
+| Found by | Defect | Fix |
+|---|---|---|
+| Load test | p99 latency of 2.5-6.5 s: a `last_used_at` write per API-key request contended with audit writes for SQLite's write lock | Written at most once per minute per key, best effort |
+| Load test | ~1 in 300-1,500 requests failed closed (503): the audit secret scan read ~1 in 10,000 random request ids as card numbers | Generated 32-hex ids not scanned as content |
+| Load test | Audit write failures left no log trace | Logged by exception type and request id |
+| Test isolation | Tests shared one audit anchor file, so results depended on test order | Each test uses its own anchor |
+| API fuzzing (CI, once; reproduced with 200 examples) | `before_seq` beyond SQLite's 64-bit INTEGER overflowed in the driver: 500 | Bounded, 422 |
+| Regression test for the review | A `%` in the database path broke Alembic migrations (config interpolation), so the gateway could not start | `%` escaped for Alembic |
+
+Live end-to-end check against the running gateway and Google Gemini (API):
+12/12 - redaction with a real answer, streaming, block, approval hold → second
+admin approves → executed once → second execution refused, self-approval
+refused, extension-sourced inspection, audit chain verifies, metrics show the
+extension source, no raw secret in the audit log. Online backup of the live
+development database: 97 events, chain verified. Detection evaluation re-run:
+quality unchanged (latency fields differ only by machine load).
+
+## Independent security review (Phase 7)
+
+No Critical or High findings; the audit group commit kept the chain correct in
+every scenario the reviewer constructed (failures before/after commit,
+cancellation, two engines on one database with checkpoints every 3 events).
+
+| # | Severity | Finding | Fix | Regression test |
+|---|---|---|---|---|
+| 1 | Medium | A file `<input>` inside a shadow root was never checked (the composed `input` event reaches the window retargeted to the host) | The real target is taken from `composedPath()[0]` | `checks a file input inside a shadow root` (fails on the old code) |
+| 2 | Medium | The Edge policy used Chrome's `IncognitoModeAvailability`; InPrivate stayed available | Edge gets `InPrivateModeAvailability = 1` | generator run: Edge/Chrome files checked |
+| 3 | Low | The generated-id exemption in the audit secret scan applied to any field: `{"password": <32 hex>}` was accepted | Exempt only in identifier fields (`request_id`, `approval_id`, `user_id`, `key_id`, ...) | `test_hex_values_outside_id_fields_are_still_scanned` (fails on the old code) |
+| 4 | Low | A second pick during a check left unchecked files in the input | Input emptied on every held event | `empties the input when files are picked again...` (fails on the old code) |
+| 5 | Low | A repeated cancellation could release the audit lock while its commit was still running (chain stayed correct via `BEGIN IMMEDIATE` + head check) | Lock held until the commit task is done, however often cancelled | group-commit tests |
+| 6 | Low | A caller cancelled while queued could have its event committed later for a request never carried out | Withdrawn from the queue on cancellation | `test_caller_cancelled_while_queued_is_withdrawn` (fails on the old code) |
+| 7 | Low | An exception after commit (e.g. in anchor writing) left other callers waiting forever | Callers settled first, anchor errors logged, futures always settled in `finally` | `test_anchor_failure_never_leaves_callers_waiting` (fails on the old code) |
+| 8 | Low | Policy generator: URLs only prefix-checked; CR/LF could inject `.reg` lines | Absolute https URL without control characters, quotes, spaces or `;` | generator run with 4 malicious URLs: all rejected |
+| 9 | Low | Backup built its source URI unescaped and parsed the database URL by hand | File URI via `as_uri()`; path taken from SQLAlchemy's own URL parsing | `test_backup_handles_uri_special_characters_in_the_path` (also exposed the Alembic `%` defect above) |
+| 10 | Info | One non-retryable database error fails every caller in that batch | Documented: correct fail-closed behaviour with a larger blast radius | - |
+| 11 | Info | Microsoft 365 Copilot web host not listed | `copilot.cloud.microsoft` added to the browser blocklist | `manifest.test.ts` consistency |
+| 12 | Info | Dockerfile dependencies and base images not locked | Documented (Dockerfile unbuilt) | - |
+
 ## Phase 6 live run (2026-10-18, Chromium, real gateway)
 
 Loading an unpacked extension is not possible in the test browser, so the
@@ -385,7 +443,8 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 12. **Audit rollback** is detected only through a checkpoint stored outside the
     database. The default anchor file is on the same machine; protection against a
     full host compromise requires exporting checkpoints to another system.
-13. The PostgreSQL path (row lock, triggers) is implemented but untested; only
+13. The PostgreSQL path (row lock, triggers) is implemented but untested (and
+    its driver is not a default dependency); only
     SQLite is verified.
 14. Verifying event MACs needs the symmetric audit key; only checkpoint
     verification works with a public key alone.
@@ -398,9 +457,10 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
     unfenced code are not checked, and a clean result is not a proof of safety.
     Output findings below the 0.6 confidence threshold (e.g. short random
     tokens without a keyword) pass, as for prompts.
-16. Rate limits are per process; several workers each enforce their own budget.
-    `X-Forwarded-For` is not trusted, so behind a reverse proxy all clients share
-    the proxy's login budget until trusted-proxy support is configured.
+16. Rate limits and the audit group commit are per process; several workers
+    each enforce their own budget. Behind a reverse proxy the client IP must come
+    from Uvicorn's `--proxy-headers --forwarded-allow-ips <proxy>`
+    (`docs/DEPLOYMENT.md`); otherwise all clients share the proxy's login budget.
 17. No JWT refresh tokens; sessions last 30 minutes. A logout revokes sessions at
     sub-second precision only.
 18. Separation of duties relies on recorded account creators; CLI-bootstrapped
@@ -413,6 +473,13 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
     per request from at most 50,000 audit events in the window. Frontend tests are
     unit/component tests; the end-to-end check was a manual live walkthrough, not
     an automated browser suite.
+21. Uploads: only text/code files up to 1 MB are inspected; the contents of PDF,
+    Office documents, images and archives are not - they are blocked by default.
+    Pasted files lose any text pasted with them (only the files are replayed).
+22. The enterprise policy pack and Dockerfile were generated / written and
+    checked for correctness, but not deployed to a managed fleet or built
+    (no Docker, no domain-joined test machine). Load and fuzz numbers come from
+    one developer laptop with high run-to-run variance.
 
 ## Environment notes (Windows)
 
@@ -424,16 +491,15 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 
 ## Next steps (exact)
 
-**Phase 7 — hardening, load and security testing**
+**Phase 8 — academic deliverables**
 
-1. Load test the gateway (inspect, chat, streaming) and record latency and
-   throughput; profile the detection engine on large prompts.
-2. Security testing: automated API fuzzing (schemathesis) against the OpenAPI
-   schema, dependency audits (pip-audit, npm audit) in CI, a ZAP baseline scan of
-   the dashboard, pin GitHub Actions to commit SHAs, Trusted Types for the
-   dashboard.
-3. Deployment hardening: Dockerfile (non-root, read-only filesystem), production
-   settings checklist (keys from a secret store, HTTPS reverse proxy, trusted
-   proxy headers for rate limits), backup/restore and checkpoint export for the
-   audit log.
-4. Re-run the evaluation and the full live walkthrough; update all reports.
+1. Software Requirements Specification (functional and non-functional
+   requirements traced to tests).
+2. Diagrams: system context, component, deployment, sequence diagrams for
+   prompt inspection, approval, streaming output inspection and the extension
+   flow; data-flow diagram with trust boundaries.
+3. Full STRIDE threat model per component (building on
+   `docs/SECURITY-ARCHITECTURE.md`), risk register with residual risk.
+4. Project report: problem, related work, design, implementation, evaluation
+   (detection metrics, performance, security testing), limitations, future work;
+   user and operator manuals; presentation slides.

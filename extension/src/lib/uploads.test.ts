@@ -196,3 +196,36 @@ describe('file panel wording', () => {
     ])
   })
 })
+
+describe('Phase 7 review regressions', () => {
+  it('checks a file input inside a shadow root (Medium)', async () => {
+    document.body.innerHTML = '<div id="host"></div>'
+    const root = document.getElementById('host')!.attachShadow({ mode: 'open' })
+    const input = document.createElement('input')
+    input.type = 'file'
+    root.append(input)
+    const seen: string[] = []
+    input.addEventListener('input', () => seen.push('input'))
+    const { inspectFile, redeliver } = setup(decision('BLOCK'))
+    Object.defineProperty(input, 'files', { value: [new File([SECRET], 'creds.env')], configurable: true })
+    // "input" is composed: it reaches the window retargeted to the shadow host.
+    input.dispatchEvent(asUser(new Event('input', { bubbles: true, composed: true })))
+    await settle()
+    expect(inspectFile).toHaveBeenCalledWith('creds.env', SECRET)
+    expect(seen).toEqual([])
+    expect(redeliver).not.toHaveBeenCalled()
+  })
+
+  it('empties the input when files are picked again during a check (Low)', async () => {
+    const { input } = fileInput()
+    let finish!: (v: Verdict) => void
+    setup(() => new Promise<Verdict>((r) => (finish = r)))
+    pick(input, [new File(['a'], 'a.txt')])
+    Object.defineProperty(input, 'value', { value: 'C:\fakepath\b.txt', configurable: true, writable: true })
+    pick(input, [new File([SECRET], 'b.env')])
+    expect(input.value).toBe('')
+    await settle() // the first check reaches the gateway call
+    finish(decision('BLOCK'))
+    await settle()
+  })
+})

@@ -477,3 +477,12 @@ async def test_card_numbers_are_still_rejected_outside_id_shapes(audit: AuditLog
     for data in ({"note": card}, {"note": f"card {card}"}, {"id": card + "abcd"}):
         with pytest.raises(UnsafeAuditDataError, match="CREDIT_CARD"):
             await audit.append(AuditEventIn(event_type="test.note", actor="u1", data=data))
+
+
+async def test_hex_values_outside_id_fields_are_still_scanned(audit: AuditLog) -> None:
+    """Regression (Phase 7 review): the id exemption applied to any field."""
+    hex32 = "0123456789abcdef" * 2
+    with pytest.raises(UnsafeAuditDataError):
+        await audit.append(
+            AuditEventIn(event_type="test.note", actor="u1", data={"password": hex32})
+        )

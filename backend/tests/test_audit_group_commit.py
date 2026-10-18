@@ -86,3 +86,48 @@ async def test_cancelling_the_committing_caller_does_not_fail_the_others(
     report = await audit.verify()
     assert report.ok, report.issues
     assert report.events_checked == 6  # the cancelled caller's event was committed too
+
+
+async def test_caller_cancelled_while_queued_is_withdrawn(
+    audit: AuditLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (Phase 7 review): a request cancelled before its turn must not
+    get an audit record committed later on its behalf."""
+    original = audit._append_many
+    release = asyncio.Event()
+
+    async def held(batch: Any) -> Any:
+        await release.wait()
+        return await original(batch)
+
+    monkeypatch.setattr(audit, "_append_many", held)
+    first = asyncio.create_task(audit.append(_ev(0)))  # takes the lock, waits in held()
+    await asyncio.sleep(0.01)
+    queued = asyncio.create_task(audit.append(_ev(1)))
+    await asyncio.sleep(0.01)
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    release.set()
+    await first
+    await audit.append(_ev(2))
+    report = await audit.verify()
+    assert report.ok, report.issues
+    events = await audit.list_events(limit=10)
+    assert sorted(e.data["i"] for e in events) == [0, 2]
+
+
+async def test_anchor_failure_never_leaves_callers_waiting(
+    audit: AuditLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (Phase 7 review): an exception after commit left futures unsettled."""
+    audit.checkpoint_interval = 2
+
+    def broken_anchor(cp: Any) -> None:
+        raise RuntimeError("anchor bug")
+
+    monkeypatch.setattr(audit, "_write_anchor", broken_anchor)
+    records = await asyncio.wait_for(
+        asyncio.gather(*(audit.append(_ev(i)) for i in range(12))), timeout=10
+    )
+    assert sorted(r.seq for r in records) == list(range(1, 13))

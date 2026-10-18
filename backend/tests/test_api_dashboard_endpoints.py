@@ -135,3 +135,13 @@ def test_sensitive_looking_source_is_refused(gw: Gateway) -> None:
         r = gw.client.post("/v1/inspect", headers=gw.h("dev1"), json=body)
         assert r.status_code == 400, label
         assert label.split(":")[1] not in r.text
+
+
+def test_out_of_range_audit_cursor_is_rejected_not_a_server_error(gw: Gateway) -> None:
+    """Regression (API fuzzing, Phase 7): before_seq beyond SQLite's 64-bit
+    INTEGER overflowed in the driver and answered 500."""
+    for value in ("1565795716699987953715590266355712", str(2**63)):
+        r = gw.client.get(f"/v1/admin/audit/events?before_seq={value}", headers=gw.h("admin"))
+        assert r.status_code == 422, value
+    ok = gw.client.get(f"/v1/admin/audit/events?before_seq={2**63 - 1}", headers=gw.h("admin"))
+    assert ok.status_code == 200

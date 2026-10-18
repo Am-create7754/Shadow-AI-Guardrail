@@ -27,7 +27,8 @@
     "writesonic.com",
     "jasper.ai",
     "openrouter.ai",
-    "lmarena.ai"
+    "lmarena.ai",
+    "copilot.cloud.microsoft"
   ],
   "provider_apis_gateway_only": [
     "api.openai.com",

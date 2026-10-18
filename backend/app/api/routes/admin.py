@@ -15,6 +15,10 @@ from app.approvals.models import ApprovalStatus
 from app.approvals.service import ApprovalError
 from app.auth.service import AuthError, User
 
+# Largest value a SQL INTEGER column holds; larger query values are rejected (422)
+# instead of overflowing in the database driver (found by API fuzzing).
+MAX_SQL_INT = 2**63 - 1
+
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
 
@@ -124,7 +128,7 @@ async def audit_events(
     admin: AdminUser,
     services: ServicesDep,
     limit: int = Query(default=50, ge=1, le=500),
-    before_seq: int | None = Query(default=None, ge=1),
+    before_seq: int | None = Query(default=None, ge=1, le=MAX_SQL_INT),
     event_type: str | None = Query(default=None, max_length=64),
     actor: str | None = Query(default=None, max_length=128),
 ) -> list[dict[str, Any]]:

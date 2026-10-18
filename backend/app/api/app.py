@@ -42,7 +42,8 @@ logger = logging.getLogger("guardrail.api")
 
 def migrate(database_url: str) -> None:
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
-    cfg.set_main_option("sqlalchemy.url", database_url)
+    # Alembic config values are %-interpolated: a "%" in the path must be escaped.
+    cfg.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     command.upgrade(cfg, "head")
 
 

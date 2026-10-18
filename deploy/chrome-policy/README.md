@@ -11,7 +11,7 @@ What the generated policy does:
 | `ExtensionInstallForcelist` | Installs the extension on every managed browser; users cannot disable or remove it |
 | `3rdparty/extensions/<id>/policy` | Pins `gatewayUrl`, `failMode`, `uploadPolicy` and `enabled=true` (read by the extension via `chrome.storage.managed`; the options page shows them as locked) |
 | `URLBlocklist` | Blocks AI sites the extension does not cover (`deploy/ai-domains.json` → `block_in_browser`) |
-| `IncognitoModeAvailability = 1` | Disables Incognito, where the extension would not run |
+| `IncognitoModeAvailability = 1` (Chrome), `InPrivateModeAvailability = 1` (Edge) | Disables private windows, where the extension would not run |
 | `BrowserGuestModeEnabled = false` | Disables Guest mode, which has no extensions |
 
 ## Steps (Windows PowerShell)

@@ -47,13 +47,25 @@ if (-not ($gw.Scheme -eq 'https' -or ($gw.Scheme -eq 'http' -and $loopback -cont
 if ($gw.AbsolutePath -ne '/' -or $gw.Query -or $gw.UserInfo) { throw 'GatewayUrl must be an origin only' }
 $origin = $gw.GetLeftPart([UriPartial]::Authority)
 
+# URLs end up in .reg, JSON and XML files: absolute https URLs without control
+# characters, quotes or ';' (the force-list separator) only.
+function Assert-SafeUrl([string] $name, [string] $value) {
+    $u = $null
+    if (-not [Uri]::TryCreate($value, [UriKind]::Absolute, [ref] $u) -or $u.Scheme -ne 'https' -or
+        $value -match '[\x00-\x1f\x7f";\s]') {
+        throw "$name must be an absolute https:// URL without spaces, quotes, ';' or control characters"
+    }
+}
+Assert-SafeUrl 'UpdateUrl' $UpdateUrl
+if ($CrxUrl) { Assert-SafeUrl 'CrxUrl' $CrxUrl }
+
 $domains = Get-Content -Raw -Encoding UTF8 $DomainsFile | ConvertFrom-Json
 $blocklist = @($domains.block_in_browser)
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 function Escape-Reg([string] $s) { $s.Replace('\', '\\').Replace('"', '\"') }
 
-function New-RegFile([string] $root) {
+function New-RegFile([string] $root, [string] $privateModePolicy) {
     $lines = @('Windows Registry Editor Version 5.00', '')
     $lines += "[$root\ExtensionInstallForcelist]"
     $lines += ('"1"="{0};{1}"' -f $ExtensionId, (Escape-Reg $UpdateUrl))
@@ -62,7 +74,7 @@ function New-RegFile([string] $root) {
     for ($i = 0; $i -lt $blocklist.Count; $i++) { $lines += ('"{0}"="{1}"' -f ($i + 1), (Escape-Reg $blocklist[$i])) }
     $lines += ''
     $lines += "[$root]"
-    $lines += '"IncognitoModeAvailability"=dword:00000001'
+    $lines += ('"{0}"=dword:00000001' -f $privateModePolicy)  # 1 = private browsing disabled
     $lines += '"BrowserGuestModeEnabled"=dword:00000000'
     $lines += ''
     # Settings read by the extension through chrome.storage.managed.
@@ -76,8 +88,8 @@ function New-RegFile([string] $root) {
     return ($lines -join "`r`n")
 }
 
-[IO.File]::WriteAllText((Join-Path $OutDir 'guardrail-chrome.reg'), (New-RegFile 'HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome'), [Text.Encoding]::Unicode)
-[IO.File]::WriteAllText((Join-Path $OutDir 'guardrail-edge.reg'), (New-RegFile 'HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge'), [Text.Encoding]::Unicode)
+[IO.File]::WriteAllText((Join-Path $OutDir 'guardrail-chrome.reg'), (New-RegFile 'HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome' 'IncognitoModeAvailability'), [Text.Encoding]::Unicode)
+[IO.File]::WriteAllText((Join-Path $OutDir 'guardrail-edge.reg'), (New-RegFile 'HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge' 'InPrivateModeAvailability'), [Text.Encoding]::Unicode)
 
 $policy = [ordered]@{
     ExtensionInstallForcelist = @("$ExtensionId;$UpdateUrl")

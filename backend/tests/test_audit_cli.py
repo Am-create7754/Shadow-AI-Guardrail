@@ -17,7 +17,9 @@ from app.core import config
 def cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     db = tmp_path / "cli.db"
     monkeypatch.setenv("GUARDRAIL_ENVIRONMENT", "development")
-    monkeypatch.setenv("GUARDRAIL_DATABASE_URL", f"sqlite+aiosqlite:///{db.as_posix()}")
+    # In a database URL "%" is written "%25" (SQLAlchemy percent-decodes the path).
+    url_path = db.as_posix().replace("%", "%25")
+    monkeypatch.setenv("GUARDRAIL_DATABASE_URL", f"sqlite+aiosqlite:///{url_path}")
     monkeypatch.setenv("GUARDRAIL_KEYS_DIR", str(tmp_path / "keys"))
     # Own anchor: checkpoints written here must not leak into other tests.
     monkeypatch.setenv("GUARDRAIL_AUDIT_ANCHOR_PATH", str(tmp_path / "anchor.json"))
@@ -120,3 +122,22 @@ def test_backup_of_tampered_database_is_reported(
     capsys.readouterr()
     assert main(["backup", "--out", str(cli_env / "b.db")]) == 1
     assert json.loads(capsys.readouterr().out)["chain_ok"] is False
+
+
+@pytest.mark.filterwarnings("ignore:generating development")
+def test_backup_handles_uri_special_characters_in_the_path(
+    cli_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression (Phase 7 review): the source path was put into a file: URI unescaped."""
+    odd = cli_env / "odd #1 %20 dir"
+    odd.mkdir()
+    db = odd / "data.db"
+    # In a database URL "%" is written "%25" (SQLAlchemy percent-decodes the path).
+    url_path = db.as_posix().replace("%", "%25")
+    monkeypatch.setenv("GUARDRAIL_DATABASE_URL", f"sqlite+aiosqlite:///{url_path}")
+    config.get_settings.cache_clear()
+    assert main(["init-db"]) == 0
+    capsys.readouterr()
+    assert main(["backup", "--out", str(cli_env / "copy.db")]) == 0
+    assert json.loads(capsys.readouterr().out)["chain_ok"] is True
+    assert db.exists()  # the real file, not a percent-decoded look-alike
