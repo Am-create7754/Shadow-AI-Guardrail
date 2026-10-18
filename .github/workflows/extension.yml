@@ -99,7 +99,7 @@ jobs:
         working-directory: extension
       - run: npm run build
         working-directory: extension
-      - run: node e2e/policy_check.mjs
+      - run: xvfb-run -a node e2e/policy_check.mjs
         working-directory: extension
         env:
           GUARDRAIL_PYTHON: python

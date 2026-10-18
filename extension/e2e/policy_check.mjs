@@ -132,7 +132,9 @@ function statusOf(parts, name) {
 for (const b of BROWSERS) {
   const browser = await puppeteer.launch({
     executablePath: b.exe,
-    headless: true,
+    // Headed under xvfb on Linux: headless Chrome does not run the extension
+    // installer that policy force-installs rely on.
+    headless: WINDOWS || !process.env.DISPLAY,
     pipe: true,
     enableExtensions: true,
     userDataDir: join(work, `profile-${b.name.replace(/\W/g, '')}`),
@@ -197,6 +199,9 @@ for (const b of BROWSERS) {
     } else {
       check(`${b.name}: extension shows its settings locked by policy`, locked, JSON.stringify(state))
     }
+  } catch (e) {
+    // Keep reporting: an exception is a failed check, not a silent stop.
+    check(`${b.name}: checks completed without an exception`, false, String(e?.message ?? e))
   } finally {
     await browser.close()
   }
