@@ -135,6 +135,9 @@ for (const b of BROWSERS) {
     // Headed under xvfb on Linux: headless Chrome does not run the extension
     // installer that policy force-installs rely on.
     headless: WINDOWS || !process.env.DISPLAY,
+    // Puppeteer's default --disable-background-networking also stops the
+    // extension updater, which fetches force-installed extensions.
+    ignoreDefaultArgs: ['--disable-background-networking'],
     pipe: true,
     enableExtensions: true,
     userDataDir: join(work, `profile-${b.name.replace(/\W/g, '')}`),
