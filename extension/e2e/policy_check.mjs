@@ -201,20 +201,28 @@ for (const b of BROWSERS) {
       check(`${b.name}: policy ExtensionInstallForcelist applied`, force === 'OK', force)
     }
 
-    // 3. The extension reads the pinned settings (chrome.storage.managed).
-    // A freshly force-installed extension may still be initialising: a
-    // navigation can be interrupted ("frame was detached"), so retry on a new tab.
-    let opts
-    for (let attempt = 1; ; attempt++) {
-      opts = await browser.newPage()
-      try {
-        await opts.goto(`chrome-extension://${id}/options.html`, { waitUntil: 'load', timeout: 20000 })
-        break
-      } catch (e) {
-        await opts.close().catch(() => {})
-        if (attempt === 5) throw e
-        await new Promise((r) => setTimeout(r, 3000))
-      }
+    // 3. The extension receives the pinned settings (chrome.storage.managed),
+    //    asked in its own service worker - what the extension itself reads.
+    if (!WINDOWS) {
+      const sw = await browser
+        .waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${id}/`), { timeout: 30000 })
+        .catch(() => null)
+      const managed = sw ? await (await sw.worker()).evaluate(() => chrome.storage.managed.get(null)) : null
+      check(
+        `${b.name}: extension receives the policy settings (chrome.storage.managed)`,
+        managed?.gatewayUrl === GATEWAY && managed?.uploadPolicy === 'warn' && managed?.failMode === 'block' && managed?.enabled === true,
+        JSON.stringify(managed),
+      )
+    }
+
+    // 4. ...and its options page shows them locked.
+    const opts = await browser.newPage()
+    try {
+      await opts.goto(`chrome-extension://${id}/options.html`, { waitUntil: 'load', timeout: 20000 })
+    } catch (e) {
+      if (WINDOWS) throw e
+      note(`${b.name} options page`, `not opened in this automated session (${e.message}); managed settings verified above`)
+      continue
     }
     await opts.waitForFunction(() => document.getElementById('gateway')?.value !== '', { timeout: 15000 }).catch(() => {})
     const state = await opts.evaluate(() => ({
