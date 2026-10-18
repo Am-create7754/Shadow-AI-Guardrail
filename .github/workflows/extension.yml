@@ -77,3 +77,29 @@ jobs:
         working-directory: extension
       - run: node e2e/policy_check.mjs
         working-directory: extension
+
+  policy-linux:
+    name: policy pack on Linux (force-install from a self-hosted update server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y libnss3-tools xvfb
+      - run: python -m pip install cryptography
+      - run: npm ci
+        working-directory: extension
+      - run: npm run build
+        working-directory: extension
+      - run: node e2e/policy_check.mjs
+        working-directory: extension
+        env:
+          GUARDRAIL_PYTHON: python

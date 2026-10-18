@@ -1,22 +1,33 @@
-// Verifies the enterprise policy pack on a real Windows machine with real
-// Chrome and Edge: imports the .reg files that deploy/chrome-policy generates,
-// then checks the browsers' behaviour.
+// Verifies the enterprise policy pack (deploy/chrome-policy) on real browsers.
 //
-// CI ONLY: it writes machine-wide browser policy into the registry, so it
-// refuses to run anywhere but a disposable GitHub Actions runner.
+// CI ONLY: it writes machine-wide browser policy (Windows registry, or
+// /etc/opt/chrome/policies on Linux), so it refuses to run anywhere but a
+// disposable GitHub Actions runner.
 //
-//   node e2e/policy_check.mjs     (after `npm run build`, as Administrator)
+// Windows (Chrome + Edge): imports the generated .reg files; checks that
+//   uncovered AI sites are blocked and that each policy is applied. Chrome and
+//   Edge apply off-store force-installs and extension policies only on managed
+//   (domain-joined / enrolled) Windows machines; for those the browser's own
+//   status message is recorded rather than asserted.
+// Linux (Chrome): installs the generated JSON policy, packs a real .crx, serves
+//   it with updates.xml over HTTPS (test certificate trusted in the NSS store),
+//   and checks that Chrome force-installs the extension by itself and that the
+//   extension shows its settings locked by policy.
+//
+//   node e2e/policy_check.mjs     (after `npm run build`)
 
 import { createHash, generateKeyPairSync } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { createServer } from 'node:https'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer-core'
 
-if (process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'win32') {
-  console.error('policy_check writes machine-wide browser policy: GitHub Actions Windows runners only.')
+const WINDOWS = process.platform === 'win32'
+if (process.env.GITHUB_ACTIONS !== 'true' || !(WINDOWS || process.platform === 'linux')) {
+  console.error('policy_check writes machine-wide browser policy: GitHub Actions runners only.')
   process.exit(2)
 }
 
@@ -24,24 +35,27 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 const EXT = resolve(HERE, '..')
 const REPO = resolve(EXT, '..')
 const GATEWAY = 'https://guardrail.example.com'
-const BROWSERS = [
-  { name: 'Chrome', exe: 'C:/Program Files/Google/Chrome/Application/chrome.exe', reg: 'guardrail-chrome.reg', policyPage: 'chrome://policy', privateMode: 'IncognitoModeAvailability' },
-  { name: 'Edge', exe: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', reg: 'guardrail-edge.reg', policyPage: 'edge://policy', privateMode: 'InPrivateModeAvailability' },
-]
+const UPDATE_HOST_PORT = 8444
+const BROWSERS = WINDOWS
+  ? [
+      { name: 'Chrome', exe: 'C:/Program Files/Google/Chrome/Application/chrome.exe', reg: 'guardrail-chrome.reg', policyPage: 'chrome://policy', privateMode: 'IncognitoModeAvailability' },
+      { name: 'Edge', exe: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', reg: 'guardrail-edge.reg', policyPage: 'edge://policy', privateMode: 'InPrivateModeAvailability' },
+    ]
+  : [{ name: 'Chrome (Linux)', exe: '/usr/bin/google-chrome', policyPage: 'chrome://policy', privateMode: 'IncognitoModeAvailability' }]
 
 const results = []
 function check(name, ok, detail = '') {
   results.push({ name, ok })
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` - ${detail}` : ''}`)
-  if (!ok) console.log(`::error title=${name.replace(/[:,]/g, ' ')}::${detail.replace(/[\r\n%]/g, ' ').slice(0, 300)}`)
+  if (!ok) console.log(`::error title=${name.replace(/[:,]/g, ' ')}::${(detail || name).replace(/[\r\n%]/g, ' ').slice(0, 300)}`)
 }
+const note = (title, msg) => console.log(`::notice title=${title}::${String(msg).replace(/[\r\n%]/g, ' ').slice(0, 900)}`)
+const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ...opts })
 
-// A stable extension id: Chrome derives it from the manifest "key" (public key).
-const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+// ---- a test extension with a fixed id (Chrome derives it from the public key) ----
+const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const der = publicKey.export({ type: 'spki', format: 'der' })
-const id = [...createHash('sha256').update(der).digest('hex').slice(0, 32)]
-  .map((c) => String.fromCharCode(97 + parseInt(c, 16)))
-  .join('')
+const id = [...createHash('sha256').update(der).digest('hex').slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('')
 const work = mkdtempSync(join(tmpdir(), 'guardrail-policy-'))
 const extDir = join(work, 'ext')
 cpSync(join(EXT, 'dist'), extDir, { recursive: true })
@@ -49,17 +63,50 @@ const manifest = JSON.parse(readFileSync(join(extDir, 'manifest.json'), 'utf8'))
 manifest.key = der.toString('base64')
 writeFileSync(join(extDir, 'manifest.json'), JSON.stringify(manifest))
 
-// Generate the policy exactly as an administrator would, then import it.
+// ---- generate the policy exactly as an administrator would ----------------------
 const out = join(work, 'policy')
-const gen = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(REPO, 'deploy/chrome-policy/New-GuardrailPolicy.ps1'),
-  '-ExtensionId', id, '-UpdateUrl', `${GATEWAY}/extension/updates.xml`, '-GatewayUrl', GATEWAY, '-UploadPolicy', 'warn', '-OutDir', out], { encoding: 'utf8' })  // prettier-ignore
-check('policy generator ran', gen.status === 0, gen.stderr)
-for (const b of BROWSERS) {
-  const imp = spawnSync('reg', ['import', join(out, b.reg)], { encoding: 'utf8' })
-  check(`${b.name}: .reg imported`, imp.status === 0, imp.stderr)
+const shell = WINDOWS ? 'powershell' : 'pwsh'
+const gen = run(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(REPO, 'deploy/chrome-policy/New-GuardrailPolicy.ps1'),
+  '-ExtensionId', id, '-UpdateUrl', `${GATEWAY}/extension/updates.xml`, '-CrxUrl', `${GATEWAY}/extension/guardrail.crx`,
+  '-GatewayUrl', GATEWAY, '-UploadPolicy', 'warn', '-OutDir', out])  // prettier-ignore
+check('policy generator ran', gen.status === 0, gen.stderr || gen.stdout)
+
+let updateServer = null
+if (WINDOWS) {
+  for (const b of BROWSERS) {
+    const imp = run('reg', ['import', join(out, b.reg)])
+    check(`${b.name}: .reg imported`, imp.status === 0, imp.stderr)
+  }
+} else {
+  // Pack a real .crx with the same key, serve it and updates.xml over HTTPS.
+  const keyPem = join(work, 'key.pem')
+  writeFileSync(keyPem, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+  const pack = run('xvfb-run', ['-a', '/usr/bin/google-chrome', `--pack-extension=${extDir}`, `--pack-extension-key=${keyPem}`, '--no-message-box'])
+  check('.crx packed with the extension key', existsSync(`${extDir}.crx`), pack.stderr.slice(-300))
+  run(process.env.GUARDRAIL_PYTHON ?? 'python', [join(HERE, 'make_cert.py'), work])
+  // Trust the throwaway test certificate for this user's Chrome (NSS store).
+  const nss = join(homedir(), '.pki', 'nssdb')
+  mkdirSync(nss, { recursive: true })
+  if (!existsSync(join(nss, 'cert9.db'))) run('certutil', ['-d', `sql:${nss}`, '-N', '--empty-password'])
+  const trust = run('certutil', ['-d', `sql:${nss}`, '-A', '-t', 'C,,', '-n', 'guardrail-e2e', '-i', join(work, 'e2e-cert.pem')])
+  check('test certificate trusted (NSS)', trust.status === 0, trust.stderr)
+  const files = { '/extension/updates.xml': [join(out, 'updates.xml'), 'text/xml'], '/extension/guardrail.crx': [`${extDir}.crx`, 'application/x-chrome-extension'] }
+  const fetched = []
+  updateServer = createServer({ key: readFileSync(join(work, 'e2e-key.pem')), cert: readFileSync(join(work, 'e2e-cert.pem')) }, (req, res) => {
+    const path = (req.url ?? '').split('?')[0]
+    fetched.push(path)
+    const f = files[path]
+    if (!f) return res.writeHead(404).end()
+    res.writeHead(200, { 'Content-Type': f[1] }).end(readFileSync(f[0]))
+  })
+  updateServer.fetched = fetched
+  await new Promise((ok) => updateServer.listen(UPDATE_HOST_PORT, '127.0.0.1', ok))
+  // Install the policy machine-wide.
+  const cp = run('sudo', ['sh', '-c', `mkdir -p /etc/opt/chrome/policies/managed && cp '${join(out, 'guardrail-policy.json')}' /etc/opt/chrome/policies/managed/guardrail.json`])
+  check('JSON policy installed in /etc/opt/chrome/policies/managed', cp.status === 0, cp.stderr)
 }
 
-/** All text of a page, including inside (open and closed) shadow roots. */
+/** All visible text of a page, including inside shadow roots, as parts. */
 async function deepText(page) {
   const client = await page.createCDPSession()
   const { root } = await client.send('DOM.getDocument', { depth: -1, pierce: true })
@@ -73,13 +120,13 @@ async function deepText(page) {
   return parts
 }
 
-/** The status cell of a policy row: the value after the first "Status" label
- *  following the policy's name (the page lists name, value, ..., Status, OK). */
+/** Status of a policy row: the first status-looking cell after the policy name. */
+const STATUS = /^(OK|Error|Warning|Info|Ignored|Not set\.?)(,.*)?$/
 function statusOf(parts, name) {
   const at = parts.indexOf(name)
   if (at < 0) return 'missing'
-  const label = parts.indexOf('Status', at)
-  return label < 0 || label - at > 40 ? 'unknown' : parts[label + 1]
+  const s = parts.slice(at + 1, at + 15).find((p) => STATUS.test(p))
+  return s ?? 'unknown'
 }
 
 for (const b of BROWSERS) {
@@ -88,12 +135,24 @@ for (const b of BROWSERS) {
     headless: true,
     pipe: true,
     enableExtensions: true,
-    userDataDir: join(work, `profile-${b.name}`),
-    args: ['--no-first-run', '--no-default-browser-check'],
+    userDataDir: join(work, `profile-${b.name.replace(/\W/g, '')}`),
+    args: [
+      '--no-first-run',
+      '--no-default-browser-check',
+      ...(WINDOWS ? [] : [`--host-resolver-rules=MAP guardrail.example.com 127.0.0.1:${UPDATE_HOST_PORT}`]),
+    ],
   })
   try {
-    const installed = await browser.installExtension(extDir)
-    check(`${b.name}: test extension has the policy's id`, installed === id, installed)
+    if (WINDOWS) {
+      const installed = await browser.installExtension(extDir)
+      check(`${b.name}: test extension has the policy's id`, installed === id, installed)
+    } else {
+      // No manual install: the policy must make Chrome fetch and install it.
+      const sw = await browser
+        .waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${id}/`), { timeout: 90000 })
+        .catch(() => null)
+      check(`${b.name}: extension force-installed by policy from the update server`, !!sw, `fetched: ${updateServer.fetched.join(', ')}`)
+    }
 
     // 1. Uncovered AI sites are blocked by the browser itself (before any request).
     const page = await browser.newPage()
@@ -105,29 +164,26 @@ for (const b of BROWSERS) {
     }
     check(`${b.name}: uncovered AI site blocked by URLBlocklist`, /BLOCKED_BY_ADMINISTRATOR/.test(blocked), blocked.slice(0, 120))
 
-    // 2. The browser's policy page lists our policies, applied without errors.
+    // 2. Each policy as the browser itself reports it.
     await page.goto(b.policyPage)
     await page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 }).catch(() => {})
     const parts = await deepText(page)
-    const text = parts.join(' | ')
-    for (const name of ['ExtensionInstallForcelist', 'URLBlocklist', b.privateMode, 'BrowserGuestModeEnabled']) {
+    for (const name of ['URLBlocklist', b.privateMode, 'BrowserGuestModeEnabled']) {
       const status = statusOf(parts, name)
       check(`${b.name}: policy ${name} applied`, status === 'OK', status)
     }
-    check(`${b.name}: extension policy listed`, text.includes(id) && text.includes('gatewayUrl'))
-    for (const name of ['gatewayUrl', 'failMode', 'uploadPolicy', 'enabled']) {
-      const status = statusOf(parts, name)
-      check(`${b.name}: extension policy ${name} applied`, status === 'OK', status)
+    const force = statusOf(parts, 'ExtensionInstallForcelist')
+    const at = parts.indexOf('ExtensionInstallForcelist')
+    if (WINDOWS) {
+      note(`${b.name} force-install status (unmanaged Windows)`, `${force}: ${parts.slice(at, at + 25).join(' | ')}`)
+    } else {
+      check(`${b.name}: policy ExtensionInstallForcelist applied`, force === 'OK', force)
     }
-    const at = parts.indexOf('URLBlocklist')
-    const excerpt = parts.slice(Math.max(0, at - 5), at + 40).join(' | ')
-    console.log(`::notice title=${b.name} policy page::${excerpt.replace(/[\r\n%]/g, ' ').slice(0, 900)}`)
 
-    // 3. The extension reads the pinned settings (chrome.storage.managed): its
-    //    options page shows them locked.
+    // 3. The extension reads the pinned settings (chrome.storage.managed).
     const opts = await browser.newPage()
     await opts.goto(`chrome-extension://${id}/options.html`)
-    await opts.waitForFunction(() => document.getElementById('gateway')?.value !== '')
+    await opts.waitForFunction(() => document.getElementById('gateway')?.value !== '', { timeout: 15000 }).catch(() => {})
     const state = await opts.evaluate(() => ({
       gateway: document.getElementById('gateway').value,
       gatewayLocked: document.getElementById('gateway').disabled,
@@ -135,17 +191,19 @@ for (const b of BROWSERS) {
       uploadLocked: document.querySelector('input[name=uploadpolicy]').disabled,
       lockedNote: !document.getElementById('locked').hidden,
     }))
-    check(
-      `${b.name}: extension shows settings locked by policy`,
-      state.gateway === GATEWAY && state.gatewayLocked && state.uploadWarn && state.uploadLocked && state.lockedNote,
-      JSON.stringify(state),
-    )
+    const locked = state.gateway === GATEWAY && state.gatewayLocked && state.uploadWarn && state.uploadLocked && state.lockedNote
+    if (WINDOWS) {
+      note(`${b.name} extension policy (unmanaged Windows)`, `${locked ? 'applied' : 'not applied'} ${JSON.stringify(state)}; gatewayUrl status: ${statusOf(parts, 'gatewayUrl')}`)
+    } else {
+      check(`${b.name}: extension shows its settings locked by policy`, locked, JSON.stringify(state))
+    }
   } finally {
     await browser.close()
   }
 }
+updateServer?.close()
 
 const failed = results.filter((r) => !r.ok).length
-console.log(`::notice title=Policy pack on Windows::${results.length - failed}/${results.length} checks passed`)
+note(`Policy pack (${WINDOWS ? 'Windows' : 'Linux'})`, `${results.length - failed}/${results.length} checks passed`)
 console.log(`\n${results.length - failed}/${results.length} passed`)
 process.exit(failed ? 1 : 0)

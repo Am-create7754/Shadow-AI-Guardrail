@@ -40,7 +40,7 @@ $ErrorActionPreference = 'Stop'
 # Defaults resolved here: Windows PowerShell 5.1 leaves $PSScriptRoot empty in
 # parameter defaults when the script is run with `powershell -File`.
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $DomainsFile) { $DomainsFile = Join-Path $here '..\ai-domains.json' }
+if (-not $DomainsFile) { $DomainsFile = Join-Path $here '../ai-domains.json' }  # '/' works on Windows and Linux
 if (-not $OutDir) { $OutDir = Join-Path $here 'out' }
 
 # Same rule as the extension: HTTPS, or plain HTTP only for this machine.
@@ -119,7 +119,7 @@ $net = @('# AI services to block at the DNS filter / web proxy for every device.
 # Update manifest for a self-hosted .crx (served at -UpdateUrl).
 if ($CrxUrl) {
     if ($CrxUrl -notmatch '^https://') { throw 'CrxUrl must use https://' }
-    $manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $here '..\..\extension\src\manifest.json') | ConvertFrom-Json
+    $manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $here '../../extension/src/manifest.json') | ConvertFrom-Json
     $xml = @"
 <?xml version='1.0' encoding='UTF-8'?>
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>

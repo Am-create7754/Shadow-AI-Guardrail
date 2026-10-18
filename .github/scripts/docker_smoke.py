@@ -31,7 +31,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, ok, detail))
     print(("PASS " if ok else "FAIL ") + name + (f" - {detail}" if detail else ""), flush=True)
     if not ok:
-        clean = detail.replace("\n", " ").replace("%", " ")[:300]
+        # An empty annotation message is dropped by GitHub: fall back to the name.
+        clean = (detail or name).replace("\n", " ").replace("%", " ")[:300]
         print(
             f"::error title=Docker {name.replace(':', ' ').replace(',', ' ')}::{clean}", flush=True
         )
@@ -54,9 +55,9 @@ def http(
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
-            return r.status, dict(r.headers), r.read().decode()
+            return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read().decode()
     except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers), e.read().decode()
+        return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read().decode()
 
 
 def main() -> int:
@@ -99,7 +100,7 @@ def main() -> int:
         check("/ready answers 200 (migrations applied)", ready, docker("logs", NAME).stderr[-500:])
 
         status, headers, body = http("GET", "/app/")
-        csp = headers.get("Content-Security-Policy", "")
+        csp = headers.get("content-security-policy", "")  # names lower-cased above
         check(
             "dashboard served with strict CSP",
             status == 200 and "trusted-types 'none'" in csp,
