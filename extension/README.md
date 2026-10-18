@@ -99,7 +99,11 @@ or paste, are checked. Voice input, screenshots taken by the site itself,
 uploads started by other means, and the *contents* of files the gateway cannot
 read (PDF, Office, images) are not inspected - such files are blocked or need
 confirmation instead. Site selectors follow
-third-party markup and need maintenance when sites change. Verified with unit
-tests (jsdom) and in Chromium against pages that imitate the sites' editors
-(textarea + form, contenteditable) with the real gateway - **not on the live
-third-party sites**, which require accounts.
+third-party markup and need maintenance when sites change.
+
+Verification: unit tests (jsdom), and `npm run e2e` - the **packaged** extension
+in real Chrome and Edge against local HTTPS copies of chatgpt.com and claude.ai
+with an isolated gateway (14/14, also in CI on Linux). A read-only check of the
+live sites (`node e2e/live_selectors.mjs`) matched the Gemini editor; ChatGPT and
+Claude show automated browsers a bot check, so their live markup is not verified
+by automation.

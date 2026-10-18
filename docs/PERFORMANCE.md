@@ -38,6 +38,20 @@ requests write two (forwarded + completed).
 * With a real provider, model latency (hundreds of ms to seconds) dominates;
   the gateway adds the inspection and audit time measured above.
 
+## Second machine (GitHub Actions Linux runner, CI)
+
+Same test, 300 requests per scenario, 16 concurrent clients (2026-10-18):
+
+| Scenario | Req/s | p50 ms | p95 ms | p99 ms | Errors |
+|---|---|---|---|---|---|
+| inspect, short prompt with a secret | 345 | 49 | 65 | 69 | 0 |
+| inspect, 20k-char source file | 60 | 276 | 363 | 370 | 0 |
+| chat, redacted + forwarded + answer inspected | 271 | 59 | 75 | 82 | 0 |
+| chat, streamed | 250 | 62 | 81 | 87 | 0 |
+| chat, blocked (card number) | 340 | 48 | 68 | 85 | 0 |
+
+The backend CI job repeats this on every push (results as annotations).
+
 ## Variance
 
 Numbers on this laptop vary by up to ~2-3x between runs (OneDrive sync, antivirus

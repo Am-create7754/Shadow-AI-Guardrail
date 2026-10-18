@@ -1,8 +1,9 @@
 # Shadow AI Guardrail gateway + dashboard.
 #
-# NOT BUILT OR TESTED in this project's environment (Docker was not available
-# on the development machine). It follows the deployment checklist in
-# docs/DEPLOYMENT.md; build and test it before relying on it:
+# Built and smoke-tested in CI (.github/workflows/docker.yml): production mode,
+# read-only root, unprivileged user, login, inspection, audit verification.
+# Follows the checklist in docs/DEPLOYMENT.md. Dependencies and base images are
+# pinned by version/tag, not locked by hash.
 #
 #   docker build -t guardrail .
 #   docker run --read-only --tmpfs /tmp -p 8000:8000 \

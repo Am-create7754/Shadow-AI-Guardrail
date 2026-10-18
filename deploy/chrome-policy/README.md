@@ -58,6 +58,19 @@ What the generated policy does:
    `chrome://policy` to confirm the values, then `chrome://extensions` to see the
    extension marked "Installed by your administrator".
 
+## Verified behaviour (CI, 2026-10-18)
+
+* **Linux:** with the JSON policy installed, Chrome downloaded `updates.xml` and
+  the `.crx` from a self-hosted HTTPS server and installed the extension by
+  itself; the extension policy values were applied (status OK).
+* **Windows, unmanaged machine:** URLBlocklist, Incognito/InPrivate and Guest
+  policies applied in Chrome and Edge, but both browsers refuse the off-store
+  force-install and its extension policy: *"This computer is not detected as
+  enterprise managed so policy can only automatically install extensions hosted
+  on the Chrome Webstore."* On Windows, deploy to domain-joined or enrolled
+  machines (Chrome Browser Cloud Management / Intune), or publish the extension
+  as a private Web Store / Edge Add-ons item.
+
 ## Limits
 
 Policy protects **managed browsers on managed devices**. Personal devices,

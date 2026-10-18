@@ -314,6 +314,29 @@ extension source, no raw secret in the audit log. Online backup of the live
 development database: 97 events, chain verified. Detection evaluation re-run:
 quality unchanged (latency fields differ only by machine load).
 
+## Verified on real browsers, real machines and the built image (2026-10-18)
+
+The items that were "not yet proven" at the end of Phase 7, and what proved them
+(all repeatable: local scripts and CI jobs).
+
+| Claim | How it was verified | Result |
+|---|---|---|
+| The **packaged** extension works in real browsers | `extension/e2e/run.mjs`: Chrome/Edge with a temporary profile, extension installed, configured through its real options page; local HTTPS copies of chatgpt.com and claude.ai (host mapping, throwaway certificate) imitating their composer markup; trusted input events; isolated gateway | **14/14** in Chrome 155 and Edge 155 (Windows, locally) and Chrome on Linux (CI `extension / real Chrome end-to-end`) |
+| Policy pack on **Windows** (Chrome + Edge) | `extension/e2e/policy_check.mjs` on a disposable GitHub Windows runner: generated `.reg` files imported | **13/13**: uncovered AI sites blocked (`ERR_BLOCKED_BY_ADMINISTRATOR`), URLBlocklist / Incognito (Chrome) / InPrivate (Edge) / Guest policies status OK |
+| Off-store **force-install** on Windows | same job, browser's own status | Not applied on an unmanaged Windows machine - Chrome: *"This computer is not detected as enterprise managed so policy can only automatically install extensions hosted on the Chrome Webstore"* (Edge the same). Needs a domain-joined / enrolled PC or a Web Store listing |
+| Policy pack on **Linux** incl. force-install | same script on a Linux runner: JSON policy installed system-wide, `.crx` packed with the extension key, served with `updates.xml` over HTTPS | **14/14**: Chrome fetched `updates.xml` and the `.crx` and installed the extension by itself (`location: EXTERNAL_POLICY_DOWNLOAD`); its extension policy values (`gatewayUrl`, `failMode`, `uploadPolicy`, `enabled`) status OK; blocking and private/guest policies applied. (The options page of the force-installed copy could not be opened in that automated session; the browser's policy report is the evidence that the values reach the extension.) |
+| **Docker image** builds and runs as documented | `.github/scripts/docker_smoke.py` (CI `docker`): production mode, secrets from an env file, read-only root, data volume | **14/14**: `/ready`, dashboard with strict CSP + Trusted Types, docs off, no server header, uid 10001, read-only root, CLI user creation, login, redaction, audit verify (API and CLI), no secret in container logs |
+| **Load numbers on a second machine** | `python -m loadtest.run --github-notice` on a GitHub Linux runner | 0 errors; 250-345 req/s with p99 < 90 ms for prompts and chat, 60 req/s p99 370 ms for 20k-character files (`docs/PERFORMANCE.md`) |
+| Selectors against the **live** sites (read-only) | `extension/e2e/live_selectors.mjs`: public pages, logged out, nothing typed or sent | Gemini: editor selector matches the live page. ChatGPT and Claude answer automated browsers with a bot check (not bypassed). **copilot.microsoft.com now redirects to copilot.com** - a gap, now covered |
+
+Defects found by this verification and fixed:
+
+| Found by | Defect | Fix |
+|---|---|---|
+| Edge E2E run | The options page loaded its settings asynchronously and overwrote an address the user had already typed | User input is never overwritten |
+| Windows CI | The policy generator failed under `powershell -File` (`$PSScriptRoot` empty in parameter defaults in Windows PowerShell 5.1) | Defaults resolved in the script body; paths with `/` so it also runs under `pwsh` on Linux |
+| Live check | `copilot.com` (where Copilot now lives) neither covered nor blocked | Covered by the extension; in `deploy/ai-domains.json` |
+
 ## Independent security review (Phase 7)
 
 No Critical or High findings; the audit group commit kept the chain correct in
@@ -476,10 +499,11 @@ set is no longer blind. All 14 remaining leaks fall in three documented known ga
 21. Uploads: only text/code files up to 1 MB are inspected; the contents of PDF,
     Office documents, images and archives are not - they are blocked by default.
     Pasted files lose any text pasted with them (only the files are replayed).
-22. The enterprise policy pack and Dockerfile were generated / written and
-    checked for correctness, but not deployed to a managed fleet or built
-    (no Docker, no domain-joined test machine). Load and fuzz numbers come from
-    one developer laptop with high run-to-run variance.
+22. Off-store force-install and extension policy on **Windows** require a
+    managed (domain-joined / enrolled) machine or a Web Store listing - verified
+    as the browsers' own behaviour, not tested on a managed fleet. The live
+    ChatGPT and Claude pages could not be checked by automation (bot checks are
+    not bypassed); their selectors are verified only against local copies.
 
 ## Environment notes (Windows)
 

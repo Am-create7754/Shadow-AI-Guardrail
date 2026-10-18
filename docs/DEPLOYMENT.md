@@ -46,8 +46,9 @@ commit them. Generate with `python -c "import secrets; print(secrets.token_urlsa
   after `pip install asyncpg`, which is not a default dependency; the row-lock code
   path is implemented but untested - see the known limitations).
 * Run as an unprivileged user with a read-only root filesystem; only the data
-  directory (database, anchor) is writable. See the `Dockerfile` (not built in
-  this project - Docker was unavailable).
+  directory (database, anchor) is writable. The `Dockerfile` is built and
+  smoke-tested in CI on every relevant push (`.github/workflows/docker.yml`:
+  production mode, read-only root, uid 10001, login, inspection, audit verify).
 * Keep the database **outside** synced folders (OneDrive/Dropbox) - sync tools can
   corrupt SQLite's WAL files.
 * Build the dashboard (`frontend: npm ci && npm run build`); the gateway serves it
