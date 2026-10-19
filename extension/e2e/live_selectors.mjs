@@ -17,7 +17,7 @@ const EXT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 // Same selectors as src/lib/sites.ts (kept literal: this script runs without a TS build step).
 const sites = [
-  { id: 'chatgpt.com', url: 'https://chatgpt.com/', editor: '#prompt-textarea', send: 'button[data-testid="send-button"], #composer-submit-button' },
+  { id: 'chatgpt.com', url: 'https://chatgpt.com/', editor: '#prompt-textarea, div.ProseMirror[contenteditable="true"]', send: 'button[data-testid="send-button"], #composer-submit-button, button[aria-label="Send prompt"], form button[type="submit"]' },
   { id: 'claude.ai', url: 'https://claude.ai/new', editor: 'div.ProseMirror[contenteditable="true"], fieldset [contenteditable="true"]', send: 'button[aria-label="Send message"], button[aria-label="Send Message"]' },
   { id: 'gemini.google.com', url: 'https://gemini.google.com/app', editor: 'rich-textarea .ql-editor, div.ql-editor[contenteditable="true"]', send: 'button.send-button, button[aria-label="Send message"]' },
   { id: 'copilot.com', url: 'https://copilot.com/', editor: 'textarea#userInput, textarea[data-testid="composer-input"]', send: 'button[data-testid="submit-button"], button[aria-label="Submit message"]' },

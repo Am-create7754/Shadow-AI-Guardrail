@@ -19,9 +19,12 @@ export const SITES: readonly SiteAdapter[] = [
   {
     id: 'chatgpt.com',
     hosts: ['chatgpt.com', 'chat.openai.com'],
-    // Only the real composer: ChatGPT keeps a hidden fallback <textarea> beside it.
-    editor: '#prompt-textarea',
-    send: 'button[data-testid="send-button"], #composer-submit-button',
+    // The composer is a ProseMirror editor; it lost its #prompt-textarea id in
+    // 2026-10 (found in a live test). Only the real composer: ChatGPT keeps a
+    // hidden fallback <textarea> beside it, and its answers contain CodeMirror
+    // (cm-content) editors that must not be taken for the prompt.
+    editor: '#prompt-textarea, div.ProseMirror[contenteditable="true"]',
+    send: 'button[data-testid="send-button"], #composer-submit-button, button[aria-label="Send prompt"], form button[type="submit"]',
   },
   {
     id: 'claude.ai',

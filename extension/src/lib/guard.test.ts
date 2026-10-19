@@ -321,3 +321,24 @@ describe('Phase 6 review regressions', () => {
     expect(clicked).toEqual(['b1'])
   })
 })
+
+describe('ChatGPT markup as of 2026-10 (live test)', () => {
+  it('guards the id-less ProseMirror composer and ignores CodeMirror answer blocks', async () => {
+    document.body.innerHTML = `<div class="cm-content" contenteditable="true">print("old answer")</div>
+      <form id="f"><textarea style="display:none"></textarea>
+      <div class="ProseMirror" contenteditable="true"><p>key db_password=hunter2hunter</p></div>
+      <button type="submit" data-testid="send-button">Send</button></form>`
+    const sent: string[] = []
+    document.getElementById('f')!.addEventListener('submit', (e) => {
+      e.preventDefault()
+      sent.push('submitted')
+    })
+    const { inspect } = setup(decision('BLOCK'))
+    enter(document.querySelector('.ProseMirror p')!)
+    await settle()
+    expect(inspect).toHaveBeenCalledWith('key db_password=hunter2hunter')
+    expect(sent).toEqual([])
+    // A keypress in an answer's code block is not a prompt send.
+    expect(enter(document.querySelector('.cm-content')!)).toBe(true)
+  })
+})

@@ -53,12 +53,13 @@ const PAGES = {
   'chatgpt.com': `<!doctype html><title>ChatGPT (local copy)</title>
 <form id="composer">
   <textarea class="fallback" style="display:none"></textarea>
-  <div id="prompt-textarea" contenteditable="true" class="ProseMirror" style="min-height:3em;border:1px solid #999"><p></p></div>
+  <div class="cm-content" contenteditable="true">print("an earlier answer")</div>
+  <div contenteditable="true" class="ProseMirror" style="min-height:3em;border:1px solid #999"><p></p></div>
   <button type="submit" data-testid="send-button" id="send">Send</button>
 </form>
 <input type="file" id="upload">
 <script>
-  const form = document.getElementById('composer'), ed = document.getElementById('prompt-textarea')
+  const form = document.getElementById('composer'), ed = document.querySelector('div.ProseMirror')
   const send = (body) => fetch('/__send', { method: 'POST', body: JSON.stringify({ site: 'chatgpt', ...body }) })
   form.addEventListener('submit', (e) => { e.preventDefault(); send({ text: ed.innerText.trim() }); ed.innerHTML = '<p></p>' })
   ed.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit() } })
@@ -198,14 +199,14 @@ async function main() {
     // --- ChatGPT copy: secret prompt with Enter -> REDACT panel -> replace -> send
     const page = await browser.newPage()
     await page.goto('https://chatgpt.com/')
-    await page.click('#prompt-textarea')
+    await page.click('div.ProseMirror')
     await page.keyboard.type(`Fix this config: ${SECRET}`)
     await page.keyboard.press('Enter')
     const panel = await waitFor(() => page.$('[data-guardrail-panel]'))
     check('chatgpt: secret prompt held, warning panel shown', !!panel && received.length === 0)
     await page.keyboard.press('Enter') // focused primary button: "Replace with redacted text"
     const replaced = await waitFor(async () => {
-      const t = await page.$eval('#prompt-textarea', (el) => el.innerText)
+      const t = await page.$eval('div.ProseMirror', (el) => el.innerText)
       return t.includes('[PASSWORD_1]') ? t : null
     })
     check('chatgpt: editor now holds the placeholder', !!replaced && !replaced.includes('Hunter2'), replaced ?? '')
@@ -218,7 +219,7 @@ async function main() {
     )
 
     // --- send-button click with a card number: blocked (hidden textarea must not hide it)
-    await page.click('#prompt-textarea')
+    await page.click('div.ProseMirror')
     await page.keyboard.type(`Why was card ${CARD} declined?`)
     await page.click('#send')
     await waitFor(() => page.$('[data-guardrail-panel]'))
@@ -245,7 +246,7 @@ async function main() {
     const before = (await gatewayGet('/v1/admin/metrics?hours=1', gw.admin)).inspections
     await sleep(1500) // outside the gesture window of the last real input
     await page.evaluate((secret) => {
-      const ed = document.getElementById('prompt-textarea')
+      const ed = document.querySelector('div.ProseMirror')
       ed.innerText = `planted by the page: ${secret}`
       ed.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
       document.getElementById('send').click()
